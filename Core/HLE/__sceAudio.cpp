@@ -40,7 +40,7 @@ int mixFrequency = 44100;
 
 const int hwSampleRate = 44100;
 
-#ifdef LOW_LATENCY_AUDIO
+#if LOW_LATENCY_AUDIO
 const int hwBlockSize = 16;
 const int hostAttemptBlockSize = 256;
 #else
