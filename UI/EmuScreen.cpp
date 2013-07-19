@@ -50,8 +50,14 @@
 #include "UI/MenuScreens.h"
 #include "UI/EmuScreen.h"
 #include "UI/GameInfoCache.h"
+#include "UI/MiscScreens.h"
+
 
 EmuScreen::EmuScreen(const std::string &filename) : invalid_(true) {
+	bootGame(filename);
+}
+
+void EmuScreen::bootGame(const std::string &filename) {
 	CheckGLExtensions();
 	std::string fileToStart = filename;
 	// This is probably where we should start up the emulated PSP.
@@ -107,7 +113,6 @@ EmuScreen::EmuScreen(const std::string &filename) : invalid_(true) {
 		osm.Show(s->T("PressESC", "Press ESC to open the pause menu"), 3.0f);
 	}
 #endif
-	memset(analog_, 0, sizeof(analog_));
 	memset(&fakeInputState, 0, sizeof(fakeInputState));
 	memset(virtKeys, 0, sizeof(virtKeys));
 }
@@ -120,11 +125,23 @@ EmuScreen::~EmuScreen() {
 }
 
 void EmuScreen::dialogFinished(const Screen *dialog, DialogResult result) {
+
+	// TODO: improve the way with which we got commands from PauseMenu.
+	// DR_CANCEL means clicked on "continue", DR_OK means clicked on "back to menu",
+	// DR_YES means a message sent to PauseMenu by NativeMessageReceived.
 	if (result == DR_OK) {
 		if (g_Config.bNewUI)
 			screenManager()->switchScreen(new MainScreen());
 		else
 			screenManager()->switchScreen(new MenuScreen());
+	}
+	else if (result == DR_YES) {
+		PauseScreen::Message* msg = (PauseScreen::Message*)((Screen*)dialog)->dialogData();
+		if (msg != NULL)
+		{
+			NativeMessageReceived(msg->msg, msg->value);
+			delete msg;
+		}
 	}
 }
 
@@ -158,6 +175,10 @@ void EmuScreen::sendMessage(const char *message, const char *value) {
 		}
 #endif
 	}
+	else if (!strcmp(message, "boot")) {
+		PSP_Shutdown();
+		bootGame(value);
+	}
 }
 
 inline float curve1(float x) {
@@ -182,31 +203,151 @@ void EmuScreen::touch(const TouchInput &touch) {
 
 }
 
+void EmuScreen::onVKeyDown(int virtualKeyCode) {
+	I18NCategory *s = GetI18NCategory("Screen"); 
+
+	switch (virtualKeyCode) {
+	case VIRTKEY_SPEED_TOGGLE:
+		if (PSP_CoreParameter().fpsLimit == 0) {
+			PSP_CoreParameter().fpsLimit = 1;
+			osm.Show(s->T("fixed", "Speed: fixed"), 1.0);
+		}
+		else if (PSP_CoreParameter().fpsLimit == 1) {
+			PSP_CoreParameter().fpsLimit = 0;
+			osm.Show(s->T("standard", "Speed: standard"), 1.0);
+		}
+		break;
+
+	// On Android, this is take care of in update() using input.buttons & back
+	// Should get rid of that but not now.
+#ifndef ANDROID
+	case VIRTKEY_PAUSE:
+		screenManager()->push(new PauseScreen());
+		break;
+#endif
+
+	case VIRTKEY_AXIS_X_MIN:
+		__CtrlSetAnalogX(-1.0f, CTRL_STICK_LEFT);
+		break;
+	case VIRTKEY_AXIS_X_MAX:
+		__CtrlSetAnalogX(1.0f, CTRL_STICK_LEFT);
+		break;
+	case VIRTKEY_AXIS_Y_MIN:
+		__CtrlSetAnalogY(-1.0f, CTRL_STICK_LEFT);
+		break;
+	case VIRTKEY_AXIS_Y_MAX:
+		__CtrlSetAnalogY(1.0f, CTRL_STICK_LEFT);
+		break;
+
+	case VIRTKEY_AXIS_RIGHT_X_MIN:
+		__CtrlSetAnalogX(-1.0f, CTRL_STICK_RIGHT);
+		break;
+	case VIRTKEY_AXIS_RIGHT_X_MAX:
+		__CtrlSetAnalogX(1.0f, CTRL_STICK_RIGHT);
+		break;
+	case VIRTKEY_AXIS_RIGHT_Y_MIN:
+		__CtrlSetAnalogY(-1.0f, CTRL_STICK_RIGHT);
+		break;
+	case VIRTKEY_AXIS_RIGHT_Y_MAX:
+		__CtrlSetAnalogY(1.0f, CTRL_STICK_RIGHT);
+		break;
+	}
+}
+
+void EmuScreen::onVKeyUp(int virtualKeyCode) {
+	switch (virtualKeyCode) {
+	case VIRTKEY_AXIS_X_MIN:
+	case VIRTKEY_AXIS_X_MAX:
+		__CtrlSetAnalogX(0.0f, CTRL_STICK_LEFT);
+		break;
+	case VIRTKEY_AXIS_Y_MIN:
+	case VIRTKEY_AXIS_Y_MAX:
+		__CtrlSetAnalogY(0.0f, CTRL_STICK_LEFT);
+		break;
+
+	case VIRTKEY_AXIS_RIGHT_X_MIN:
+	case VIRTKEY_AXIS_RIGHT_X_MAX:
+		__CtrlSetAnalogX(0.0f, CTRL_STICK_RIGHT);
+		break;
+	case VIRTKEY_AXIS_RIGHT_Y_MIN:
+	case VIRTKEY_AXIS_RIGHT_Y_MAX:
+		__CtrlSetAnalogY(0.0f, CTRL_STICK_RIGHT);
+		break;
+	default:
+		break;
+	}
+}
+
 void EmuScreen::key(const KeyInput &key) {
 	int result = KeyMap::KeyToPspButton(key.deviceId, key.keyCode);
 	if (result == KEYMAP_ERROR_UNKNOWN_KEY)
 		return;
 
-	if (result >= VIRTKEY_FIRST) {
-		if (key.flags & KEY_DOWN)
-			virtKeys[result - VIRTKEY_FIRST] = true;
-		if (key.flags & KEY_UP)
-			virtKeys[result - VIRTKEY_FIRST] = false;
+	pspKey(result, key.flags);
+}
+
+void EmuScreen::pspKey(int pspKeyCode, int flags) {
+	if (pspKeyCode >= VIRTKEY_FIRST) {
+		int vk = pspKeyCode - VIRTKEY_FIRST;
+		if (flags & KEY_DOWN) {
+			virtKeys[vk] = true;
+			onVKeyDown(pspKeyCode);
+		}
+		if (flags & KEY_UP) {
+			virtKeys[vk] = false;
+			onVKeyUp(pspKeyCode);
+		}
 	} else {
-		if (key.flags & KEY_DOWN)
-			__CtrlButtonDown(result);
-		if (key.flags & KEY_UP)
-			__CtrlButtonUp(result);
+		if (flags & KEY_DOWN)
+			__CtrlButtonDown(pspKeyCode);
+		if (flags & KEY_UP)
+			__CtrlButtonUp(pspKeyCode);
 	}
 }
 
 void EmuScreen::axis(const AxisInput &axis) {
-	// TODO: Apply some form of axis mapping
-	switch (axis.axisId) {
-	case JOYSTICK_AXIS_X: analog_[0].x = axis.value; break;
-	case JOYSTICK_AXIS_Y: analog_[0].y = axis.value; break;
-	case JOYSTICK_AXIS_Z: analog_[1].x = axis.value; break;
-	case JOYSTICK_AXIS_RZ: analog_[1].y = axis.value; break;
+	int result = KeyMap::AxisToPspButton(axis.deviceId, axis.axisId, axis.value >= 0 ? 1 : -1);
+	if (result == KEYMAP_ERROR_UNKNOWN_KEY)
+		return;
+
+	switch (result) {
+	case VIRTKEY_AXIS_X_MIN:
+		__CtrlSetAnalogX(-fabs(axis.value), CTRL_STICK_LEFT);
+		break;
+	case VIRTKEY_AXIS_X_MAX:
+		__CtrlSetAnalogX(fabs(axis.value), CTRL_STICK_LEFT);
+		break;
+	case VIRTKEY_AXIS_Y_MIN:
+		__CtrlSetAnalogY(-fabs(axis.value), CTRL_STICK_LEFT);
+		break;
+	case VIRTKEY_AXIS_Y_MAX:
+		__CtrlSetAnalogY(fabs(axis.value), CTRL_STICK_LEFT);
+		break;
+
+	case VIRTKEY_AXIS_RIGHT_X_MIN:
+		__CtrlSetAnalogX(-fabs(axis.value), CTRL_STICK_RIGHT);
+		break;
+	case VIRTKEY_AXIS_RIGHT_X_MAX:
+		__CtrlSetAnalogX(fabs(axis.value), CTRL_STICK_RIGHT);
+		break;
+	case VIRTKEY_AXIS_RIGHT_Y_MIN:
+		__CtrlSetAnalogY(-fabs(axis.value), CTRL_STICK_RIGHT);
+		break;
+	case VIRTKEY_AXIS_RIGHT_Y_MAX:
+		__CtrlSetAnalogY(fabs(axis.value), CTRL_STICK_RIGHT);
+		break;
+
+	default:
+		if (axis.value >= AXIS_BIND_THRESHOLD || axis.value <= -AXIS_BIND_THRESHOLD) {
+			pspKey(result, KEY_DOWN);
+
+			// Also unpress the other direction.
+			result = KeyMap::AxisToPspButton(axis.deviceId, axis.axisId, axis.value >= 0 ? -1 : 1);
+			if (result != KEYMAP_ERROR_UNKNOWN_KEY)
+				pspKey(result, KEY_UP);
+		} else {
+			pspKey(result, KEY_UP);
+		}
 	}
 }
 
@@ -218,7 +359,7 @@ static const struct { int from, to; } legacy_touch_mapping[12] = {
 	{PAD_BUTTON_X, CTRL_SQUARE},
 	{PAD_BUTTON_Y, CTRL_TRIANGLE},
 	{PAD_BUTTON_START, CTRL_START},
-	{PAD_BUTTON_BACK, CTRL_SELECT},
+	{PAD_BUTTON_SELECT, CTRL_SELECT},
 	{PAD_BUTTON_LBUMPER, CTRL_LTRIGGER},
 	{PAD_BUTTON_RBUMPER, CTRL_RTRIGGER},
 	{PAD_BUTTON_UP, CTRL_UP},
@@ -228,11 +369,16 @@ static const struct { int from, to; } legacy_touch_mapping[12] = {
 };
 
 void EmuScreen::update(InputState &input) {
+	// Simply forcibily update to the current screen size every frame. Doesn't cost much.
+	PSP_CoreParameter().outputWidth = dp_xres;
+	PSP_CoreParameter().outputHeight = dp_yres;
+	PSP_CoreParameter().pixelWidth = pixel_xres;
+	PSP_CoreParameter().pixelHeight = pixel_yres;
+
 	globalUIState = UISTATE_INGAME;
 	if (errorMessage_.size()) {
-		screenManager()->push(new ErrorScreen(
-			"Error loading file",
-			errorMessage_));
+		screenManager()->push(new PromptScreen(
+			"Error loading file: " + errorMessage_, "OK", ""));
 		errorMessage_ = "";
 		return;
 	}
@@ -240,20 +386,13 @@ void EmuScreen::update(InputState &input) {
 	if (invalid_)
 		return;
 
-	float leftstick_x = analog_[0].x;
-	float leftstick_y = analog_[0].y;
-	float rightstick_x = analog_[1].x;
-	float rightstick_y = analog_[1].y;
+	float leftstick_x = 0.0f;
+	float leftstick_y = 0.0f;
+	float rightstick_x = 0.0f;
+	float rightstick_y = 0.0f;
 
 	// Virtual keys.
-	if (virtKeys[VIRTKEY_AXIS_X_MIN - VIRTKEY_FIRST])
-		leftstick_x -= 1.0f;
-	if (virtKeys[VIRTKEY_AXIS_X_MAX - VIRTKEY_FIRST])
-		leftstick_x += 1.0f;
-	if (virtKeys[VIRTKEY_AXIS_Y_MIN - VIRTKEY_FIRST])
-		leftstick_y -= 1.0f;
-	if (virtKeys[VIRTKEY_AXIS_Y_MAX - VIRTKEY_FIRST])
-		leftstick_y += 1.0f;
+	__CtrlSetRapidFire(virtKeys[VIRTKEY_RAPID_FIRE - VIRTKEY_FIRST]);
 
 	// First translate touches into native pad input.
 	// Do this no matter the value of g_Config.bShowTouchControls, some people
@@ -268,7 +407,7 @@ void EmuScreen::update(InputState &input) {
 		// Copy over the mouse data from the real inputstate.
 		fakeInputState.mouse_valid = input.mouse_valid;
 		fakeInputState.pad_last_buttons = fakeInputState.pad_buttons;
-		fakeInputState.pad_buttons = 0;
+		fakeInputState.pad_buttons = input.pad_buttons;
 		memcpy(fakeInputState.pointer_down, input.pointer_down, sizeof(input.pointer_down));
 		memcpy(fakeInputState.pointer_x, input.pointer_x, sizeof(input.pointer_x));
 		memcpy(fakeInputState.pointer_y, input.pointer_y, sizeof(input.pointer_y));
@@ -277,9 +416,9 @@ void EmuScreen::update(InputState &input) {
 		fakeInputState.pad_rstick_x = 0.0f;
 		fakeInputState.pad_rstick_y = 0.0f;
 		UpdateGamepad(fakeInputState);
-		UpdateInputState(&fakeInputState);
+		UpdateInputState(&fakeInputState, true);
 
-		for (int i = 0; i < ARRAY_SIZE(legacy_touch_mapping); i++) {
+		for (size_t i = 0; i < ARRAY_SIZE(legacy_touch_mapping); i++) {
 			if (fakeInputState.pad_buttons_down & legacy_touch_mapping[i].from)
 				__CtrlButtonDown(legacy_touch_mapping[i].to);
 			if (fakeInputState.pad_buttons_up & legacy_touch_mapping[i].from)
@@ -290,64 +429,39 @@ void EmuScreen::update(InputState &input) {
 		rightstick_x += fakeInputState.pad_rstick_x;
 		rightstick_y += fakeInputState.pad_rstick_y;
 
+		if (g_Config.bShowAnalogStick) {
+			__CtrlSetAnalogX(clamp1(leftstick_x), CTRL_STICK_LEFT);
+			__CtrlSetAnalogY(clamp1(leftstick_y), CTRL_STICK_LEFT);
+		}
+		__CtrlSetAnalogX(clamp1(rightstick_x), CTRL_STICK_RIGHT);
+		__CtrlSetAnalogY(clamp1(rightstick_y), CTRL_STICK_RIGHT);
+
+		// Also send the special buttons to input, since that's where they're handled.
+		input.pad_buttons_down |= fakeInputState.pad_buttons_down & (PAD_BUTTON_MENU | PAD_BUTTON_BACK | PAD_BUTTON_RIGHT_THUMB | PAD_BUTTON_LEFT_THUMB);
+		input.pad_buttons_up |= fakeInputState.pad_buttons_up & (PAD_BUTTON_MENU | PAD_BUTTON_BACK | PAD_BUTTON_RIGHT_THUMB | PAD_BUTTON_LEFT_THUMB);
+		input.pad_buttons = fakeInputState.pad_buttons;
 #ifdef _WIN32
 	}
 #endif
 
-	I18NCategory *s = GetI18NCategory("Screen"); 
+	// Still checking input.pad_buttons here to support the onscreen throttle button.
+	PSP_CoreParameter().unthrottle = virtKeys[VIRTKEY_UNTHROTTLE - VIRTKEY_FIRST] ||
+		(input.pad_buttons & PAD_BUTTON_UNTHROTTLE) != 0;
 
 	// Apply tilt to left stick
 	if (g_Config.bAccelerometerToAnalogHoriz) {
 		// TODO: Deadzone, etc.
 		leftstick_x += clamp1(curve1(input.acc.y) * 2.0f);
-		leftstick_x = clamp1(leftstick_x);
+		__CtrlSetAnalogX(clamp1(leftstick_x), CTRL_STICK_LEFT);
 	}
 
-	__CtrlSetAnalogX(clamp1(leftstick_x), 0);
-	__CtrlSetAnalogY(clamp1(leftstick_y), 0);
-	__CtrlSetAnalogX(clamp1(rightstick_x), 1);
-	__CtrlSetAnalogY(clamp1(rightstick_y), 1);
-
-	if (PSP_CoreParameter().fpsLimit != 2) {
-		// Don't really need to show these, it's pretty obvious what unthrottle does,
-		// in contrast to the three state toggle
-		/*
-		if (input.pad_buttons_down & PAD_BUTTON_UNTHROTTLE) {
-			osm.Show(s->T("unlimited", "Speed: unlimited!"), 1.0, 0x50E0FF);
-		}
-		if (input.pad_buttons_up & PAD_BUTTON_UNTHROTTLE) {
-			osm.Show(s->T("standard", "Speed: standard"), 1.0);
-		}*/
-	}
-	if (input.pad_buttons & PAD_BUTTON_UNTHROTTLE) {
-		PSP_CoreParameter().unthrottle = true;
-	} else {
-		PSP_CoreParameter().unthrottle = false;
-	}
 	// Make sure fpsLimit starts at 0
-	if (PSP_CoreParameter().fpsLimit != 0 && PSP_CoreParameter().fpsLimit != 1 && PSP_CoreParameter().fpsLimit != 2) {
+	if (PSP_CoreParameter().fpsLimit != 0 && PSP_CoreParameter().fpsLimit != 1) {
 		PSP_CoreParameter().fpsLimit = 0;
 	}
 
-	//Toggle between 3 different states of fpsLimit
-	if (input.pad_buttons_down & PAD_BUTTON_LEFT_THUMB) {
-		if (PSP_CoreParameter().fpsLimit == 0) {
-			PSP_CoreParameter().fpsLimit = 1;
-			osm.Show(s->T("fixed", "Speed: fixed"), 1.0);
-		}
-		else if (PSP_CoreParameter().fpsLimit == 1) {
-			PSP_CoreParameter().fpsLimit = 2;
-			osm.Show(s->T("unlimited", "Speed: unlimited!"), 1.0, 0x50E0FF);
-		}
-		else if (PSP_CoreParameter().fpsLimit == 2) {
-			PSP_CoreParameter().fpsLimit = 0;
-			osm.Show(s->T("standard", "Speed: standard"), 1.0);
-		}
-	}
-
-	if (input.pad_buttons_down & (PAD_BUTTON_MENU | PAD_BUTTON_BACK | PAD_BUTTON_RIGHT_THUMB)) {
-		if (g_Config.bBufferedRendering)
-			fbo_unbind();
+	// This is still here to support the iOS on screen back button.
+	if (input.pad_buttons_down & (PAD_BUTTON_BACK)) {
 		screenManager()->push(new PauseScreen());
 	}
 }

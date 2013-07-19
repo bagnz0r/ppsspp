@@ -201,6 +201,9 @@ public:
 					}
 				}
 			}
+
+			break;
+
 		case FILETYPE_PSP_ELF:
 			// An elf on its own has no usable information, no icons, no nothing.
 			info_->title = getFilename(filename);
@@ -220,7 +223,7 @@ public:
 				delete [] contents;
 			}
 
-			return;
+			break;
 
 		case FILETYPE_PSP_ISO:
 		case FILETYPE_PSP_ISO_NP:
@@ -304,7 +307,8 @@ void GameInfoCache::Decimate() {
 }
 
 void GameInfoCache::Clear() {
-	gameInfoWQ_->Flush();
+	if (gameInfoWQ_)
+		gameInfoWQ_->Flush();
 	for (auto iter = info_.begin(); iter != info_.end(); iter++) {
 		lock_guard lock(iter->second->lock);
 		if (!iter->second->pic0TextureData.empty()) {

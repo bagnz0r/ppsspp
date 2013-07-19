@@ -171,7 +171,12 @@ static const u8 flushBeforeCommandList[] = {
 GLES_GPU::GLES_GPU()
 : resized_(false) {
 	lastVsync_ = g_Config.iVSyncInterval;
-	glstate.SetVSyncInterval(g_Config.iVSyncInterval);
+	if (gl_extensions.EXT_swap_control_tear) {
+		// See http://developer.download.nvidia.com/opengl/specs/WGL_EXT_swap_control_tear.txt
+		glstate.SetVSyncInterval(-g_Config.iVSyncInterval);
+	} else {
+		glstate.SetVSyncInterval(g_Config.iVSyncInterval);
+	}
 
 	shaderManager_ = new ShaderManager();
 	transformDraw_.SetShaderManager(shaderManager_);
@@ -252,10 +257,15 @@ void GLES_GPU::DumpNextFrame() {
 void GLES_GPU::BeginFrame() {
 	// Turn off vsync when unthrottled
 	int desiredVSyncInterval = g_Config.iVSyncInterval;
-	if ((PSP_CoreParameter().unthrottle) || (PSP_CoreParameter().fpsLimit == 2) || (PSP_CoreParameter().fpsLimit == 1))
+	if ((PSP_CoreParameter().unthrottle) || (PSP_CoreParameter().fpsLimit == 1))
 		desiredVSyncInterval = 0;
 	if (desiredVSyncInterval != lastVsync_) {
-		glstate.SetVSyncInterval(desiredVSyncInterval);
+		if (gl_extensions.EXT_swap_control_tear) {
+			// See http://developer.download.nvidia.com/opengl/specs/WGL_EXT_swap_control_tear.txt
+			glstate.SetVSyncInterval(-desiredVSyncInterval);
+		} else {
+			glstate.SetVSyncInterval(desiredVSyncInterval);
+		}
 		lastVsync_ = desiredVSyncInterval;
 	}
 
@@ -282,11 +292,9 @@ void GLES_GPU::SetDisplayFramebuffer(u32 framebuf, u32 stride, int format) {
 }
 
 bool GLES_GPU::FramebufferDirty() {
-	if (!g_Config.bBufferedRendering) {
-		VirtualFramebuffer *vfb = framebufferManager_.GetDisplayFBO();
-		if (vfb)
-			return vfb->dirtyAfterDisplay;
-	}
+	VirtualFramebuffer *vfb = framebufferManager_.GetDisplayFBO();
+	if (vfb)
+		return vfb->dirtyAfterDisplay;
 	return true;
 }
 
@@ -448,18 +456,9 @@ void GLES_GPU::ExecuteOp(u32 op, u32 diff) {
 		break;
 
 	case GE_CMD_REGION1:
-		{
-			int x1 = data & 0x3ff;
-			int y1 = data >> 10;
-			//topleft
-		}
-		break;
-
 	case GE_CMD_REGION2:
-		{
-			int x2 = data & 0x3ff;
-			int y2 = data >> 10;
-		}
+		if (diff)
+			gstate_c.framebufChanged = true;
 		break;
 
 	case GE_CMD_CLIPENABLE:
@@ -585,6 +584,11 @@ void GLES_GPU::ExecuteOp(u32 op, u32 diff) {
 		break;
 
 	case GE_CMD_TEXMAPMODE:
+		if (diff) {
+			shaderManager_->DirtyUniform(DIRTY_UVSCALEOFFSET);
+		}
+		break;
+
 	case GE_CMD_TEXSHADELS:
 		break;
 
@@ -1019,7 +1023,7 @@ void GLES_GPU::DoBlockTransfer() {
 
 	// TODO: Notify all overlapping FBOs that they need to reload.
 
-	textureCache_.Invalidate(dstBasePtr + dstY * dstStride + dstX, height * dstStride + width * bpp, GPU_INVALIDATE_HINT);
+	textureCache_.Invalidate(dstBasePtr + (dstY * dstStride + dstX) * bpp, height * dstStride * bpp, GPU_INVALIDATE_HINT);
 
 	
 	// A few games use this INSTEAD of actually drawing the video image to the screen, they just blast it to

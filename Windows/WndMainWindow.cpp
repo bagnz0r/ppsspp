@@ -12,6 +12,7 @@
 #include "commctrl.h"
 
 #include "input/input_state.h"
+#include "input/keycodes.h"
 #include "Core/Debugger/SymbolMap.h"
 #include "Windows/OpenGLBase.h"
 #include "Windows/Debugger/Debugger_Disasm.h"
@@ -53,8 +54,7 @@ BOOL g_bFullScreen = FALSE;
 static RECT g_normalRC = {0};
 extern bool g_TakeScreenshot;
 extern InputState input_state;
-extern const char * getVirtualKeyName(unsigned char key);
-extern const char * getXinputButtonName(unsigned int button);
+
 #define TIMER_CURSORUPDATE 1
 #define TIMER_CURSORMOVEUPDATE 2
 #define CURSORUPDATE_INTERVAL_MS 50
@@ -73,6 +73,9 @@ namespace MainWindow
 	static int prevCursorY = -1;
 	static bool mouseButtonDown = false;
 	static bool hideCursor = false;
+	static void *rawInputBuffer;
+	static size_t rawInputBufferSize;
+	static int currentSavestateSlot = 0;
 
 	//W32Util::LayeredWindow *layer;
 #define MAX_LOADSTRING 100
@@ -85,18 +88,15 @@ namespace MainWindow
 	LRESULT CALLBACK DisplayProc(HWND, UINT, WPARAM, LPARAM);
 	LRESULT CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 
-	HWND GetHWND()
-	{
+	HWND GetHWND() {
 		return hwndMain;
 	}
 
-	HWND GetDisplayHWND()
-	{
+	HWND GetDisplayHWND() {
 		return hwndDisplay;
 	}
 
-	void Init(HINSTANCE hInstance)
-	{
+	void Init(HINSTANCE hInstance) {
 #ifdef THEMES
 		WTL::CTheme::IsThemingSupported();
 #endif
@@ -272,6 +272,9 @@ namespace MainWindow
 
 		Update();
 		SetPlaying(0);
+
+		if(g_Config.bFullScreenOnLaunch)
+			_ViewFullScreen(hwndMain);
 		
 		ShowWindow(hwndMain, nCmdShow);
 
@@ -280,6 +283,13 @@ namespace MainWindow
 #if ENABLE_TOUCH
 		RegisterTouchWindow(hwndDisplay, TWF_WANTPALM);
 #endif
+
+		RAWINPUTDEVICE keyboard;
+		memset(&keyboard, 0, sizeof(keyboard));
+		keyboard.usUsagePage = 1;
+		keyboard.usUsage = 6;
+		keyboard.dwFlags = 0; // RIDEV_NOLEGACY | ;
+		RegisterRawInputDevices(&keyboard, 1, sizeof(RAWINPUTDEVICE));
 
 		SetFocus(hwndDisplay);
 
@@ -297,8 +307,22 @@ namespace MainWindow
 				filter[i] = '\0';
 		}
 
+		// pause if a game is being played
+		bool isPaused = false;
+		if (globalUIState == UISTATE_INGAME)
+		{
+			isPaused = Core_IsStepping();
+			if (!isPaused)
+				Core_EnableStepping(true);
+		}
+
 		if (W32Util::BrowseForFileName(true, GetHWND(), "Load File", defaultPath.size() ? defaultPath.c_str() : 0, filter.c_str(),"*.pbp;*.elf;*.iso;*.cso;",fn))
 		{
+			if (globalUIState == UISTATE_INGAME || globalUIState == UISTATE_PAUSEMENU)
+			{
+				Core_EnableStepping(false);
+			}
+
 			// decode the filename with fullpath
 			std::string fullpath = fn;
 			char drive[MAX_PATH];
@@ -309,6 +333,11 @@ namespace MainWindow
 
 			std::string executable = std::string(drive) + std::string(dir) + std::string(fname) + std::string(ext);
 			NativeMessageReceived("boot", executable.c_str());
+		}
+		else
+		{
+			if (!isPaused)
+				Core_EnableStepping(false);
 		}
 	}
 
@@ -330,25 +359,28 @@ namespace MainWindow
 		// and as asynchronous touch events for minimal latency.
 
 		case WM_LBUTTONDOWN:
-			// Hack: Take the opportunity to show the cursor.
-			mouseButtonDown = true;
 			{
-				lock_guard guard(input_state.lock);
-				input_state.mouse_valid = true;
-				input_state.pointer_down[0] = true;
+				// Hack: Take the opportunity to show the cursor.
+				mouseButtonDown = true;
+				{
+					lock_guard guard(input_state.lock);
+					input_state.mouse_valid = true;
+					input_state.pointer_down[0] = true;
 
-				int factor = g_Config.iWindowZoom == 1 ? 2 : 1;
-				input_state.pointer_x[0] = GET_X_LPARAM(lParam) * factor; 
-				input_state.pointer_y[0] = GET_Y_LPARAM(lParam) * factor;
+					int factor = g_Config.iWindowZoom == 1 ? 2 : 1;
+					input_state.pointer_x[0] = GET_X_LPARAM(lParam) * factor; 
+					input_state.pointer_y[0] = GET_Y_LPARAM(lParam) * factor;
+				}
 
 				TouchInput touch;
 				touch.id = 0;
 				touch.flags = TOUCH_DOWN;
-				touch.x = GET_X_LPARAM(lParam);
-				touch.y = GET_Y_LPARAM(lParam);
+				touch.x = input_state.pointer_x[0];
+				touch.y = input_state.pointer_y[0];
 				NativeTouch(touch);
+				SetCapture(hWnd);
+				break;
 			}
-			break;
 
 		case WM_MOUSEMOVE:
 			{
@@ -363,41 +395,44 @@ namespace MainWindow
 				prevCursorX = cursorX;
 				prevCursorY = cursorY;
 
-				lock_guard guard(input_state.lock);
-				int factor = g_Config.iWindowZoom == 1 ? 2 : 1;
-				input_state.pointer_x[0] = GET_X_LPARAM(lParam) * factor; 
-				input_state.pointer_y[0] = GET_Y_LPARAM(lParam) * factor;
+				{
+					lock_guard guard(input_state.lock);
+					int factor = g_Config.iWindowZoom == 1 ? 2 : 1;
+					input_state.pointer_x[0] = GET_X_LPARAM(lParam) * factor; 
+					input_state.pointer_y[0] = GET_Y_LPARAM(lParam) * factor;
+				}
 
 				if (wParam & MK_LBUTTON) {
 					TouchInput touch;
 					touch.id = 0;
 					touch.flags = TOUCH_MOVE;
-					touch.x = GET_X_LPARAM(lParam);
-					touch.y = GET_Y_LPARAM(lParam);
+					touch.x = input_state.pointer_x[0];
+					touch.y = input_state.pointer_y[0];
 					NativeTouch(touch);
 				}
 			}
 			break;
 
 		case WM_LBUTTONUP:
-			// Hack: Take the opportunity to hide the cursor.
-			mouseButtonDown = false;
 			{
-				lock_guard guard(input_state.lock);
-				input_state.pointer_down[0] = false;
-				int factor = g_Config.iWindowZoom == 1 ? 2 : 1;
-				input_state.pointer_x[0] = GET_X_LPARAM(lParam) * factor; 
-				input_state.pointer_y[0] = GET_Y_LPARAM(lParam) * factor;
-
+				// Hack: Take the opportunity to hide the cursor.
+				mouseButtonDown = false;
+				{
+					lock_guard guard(input_state.lock);
+					input_state.pointer_down[0] = false;
+					int factor = g_Config.iWindowZoom == 1 ? 2 : 1;
+					input_state.pointer_x[0] = GET_X_LPARAM(lParam) * factor; 
+					input_state.pointer_y[0] = GET_Y_LPARAM(lParam) * factor;
+				}
 				TouchInput touch;
 				touch.id = 0;
 				touch.flags = TOUCH_UP;
-				touch.x = GET_X_LPARAM(lParam);
-				touch.y = GET_Y_LPARAM(lParam);
+				touch.x = input_state.pointer_x[0];
+				touch.y = input_state.pointer_y[0];
 				NativeTouch(touch);
+				ReleaseCapture();
+				break;
 			}
-			break;
-
 
 		// Actual touch! Unfinished
 
@@ -441,6 +476,26 @@ namespace MainWindow
 		return 0;
 	}
 
+	static int GetTrueVKey(const RAWKEYBOARD &kb) {
+		switch (kb.VKey) {
+		case VK_SHIFT:
+			return MapVirtualKey(kb.MakeCode, MAPVK_VSC_TO_VK_EX);
+		case VK_CONTROL:
+			if (kb.Flags & RI_KEY_E0)
+				return VK_RCONTROL;
+			else
+				return VK_LCONTROL;
+
+		case VK_MENU:
+			if (kb.Flags & RI_KEY_E0)
+				return VK_RMENU;  // Right Alt / AltGr
+			else
+				return VK_LMENU;  // Left Alt
+		default:
+			return kb.VKey;
+		}
+	}
+	
 	LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	{
 		int wmId, wmEvent;
@@ -474,6 +529,26 @@ namespace MainWindow
 				return 0;
 			}
 			break;
+
+		// For some reason, need to catch this here rather than in DisplayProc.
+		case WM_MOUSEWHEEL:
+			{
+				int wheelDelta = (short)(wParam >> 16);
+				KeyInput key;
+				key.deviceId = DEVICE_ID_MOUSE;
+
+				if (wheelDelta < 0) {
+					key.keyCode = KEYCODE_EXT_MOUSEWHEEL_DOWN;
+					wheelDelta = -wheelDelta;
+				} else {
+					key.keyCode = KEYCODE_EXT_MOUSEWHEEL_UP;
+				}
+				// There's no separate keyup event for mousewheel events, let's pass them both together.
+				// This also means it really won't work great for key mapping :( Need to build a 1 frame delay or something.
+				key.flags = KEY_DOWN | KEY_UP | KEY_HASWHEELDELTA | (wheelDelta << 16);
+				NativeKey(key);
+				break;
+			}
 
 		case WM_COMMAND:
 			{
@@ -510,14 +585,25 @@ namespace MainWindow
 				}
 				break;
 
-			case ID_EMULATION_RUN:
-				if (Core_IsStepping()) {
-					Core_EnableStepping(false);
-				} else {
+			case ID_TOGGLE_PAUSE:
+				if (globalUIState == UISTATE_PAUSEMENU)
+				{
 					NativeMessageReceived("run", "");
+					if (disasmWindow[0])
+						SendMessage(disasmWindow[0]->GetDlgHandle(), WM_COMMAND, IDC_GO, 0);
 				}
-				if (disasmWindow[0])
-					SendMessage(disasmWindow[0]->GetDlgHandle(), WM_COMMAND, IDC_GO, 0);
+				else if (Core_IsStepping()) //It is paused, then continue to run
+				{
+					if (disasmWindow[0])
+						SendMessage(disasmWindow[0]->GetDlgHandle(), WM_COMMAND, IDC_GO, 0);
+					else
+						Core_EnableStepping(false);
+				} else {
+					if (disasmWindow[0])
+						SendMessage(disasmWindow[0]->GetDlgHandle(), WM_COMMAND, IDC_STOP, 0);
+					else
+						Core_EnableStepping(true);
+				}
 				break;
 
 			case ID_EMULATION_STOP:
@@ -535,15 +621,6 @@ namespace MainWindow
 				Update();
 				break;
 
-			case ID_EMULATION_PAUSE:
-				if (disasmWindow[0])
-				{
-					SendMessage(disasmWindow[0]->GetDlgHandle(), WM_COMMAND, IDC_STOP, 0);
-				} else if (globalUIState == UISTATE_INGAME) {
-					Core_EnableStepping(true);
-				}
-				break;
-
 			case ID_EMULATION_RESET:
 				NativeMessageReceived("reset", "");
 				break;
@@ -555,7 +632,7 @@ namespace MainWindow
 			case ID_FILE_LOADSTATEFILE:
 				if (W32Util::BrowseForFileName(true, hWnd, "Load state",0,"Save States (*.ppst)\0*.ppst\0All files\0*.*\0\0","ppst",fn))
 				{
-					SetCursor(LoadCursor(0,IDC_WAIT));
+					SetCursor(LoadCursor(0, IDC_WAIT));
 					SaveState::Load(fn, SaveStateActionFinished);
 				}
 				break;
@@ -563,21 +640,29 @@ namespace MainWindow
 			case ID_FILE_SAVESTATEFILE:
 				if (W32Util::BrowseForFileName(false, hWnd, "Save state",0,"Save States (*.ppst)\0*.ppst\0All files\0*.*\0\0","ppst",fn))
 				{
-					SetCursor(LoadCursor(0,IDC_WAIT));
+					SetCursor(LoadCursor(0, IDC_WAIT));
 					SaveState::Save(fn, SaveStateActionFinished);
 				}
 				break;
 
-			// TODO: Add UI for multiple slots
+			// TODO: Improve UI for multiple slots
+			case ID_FILE_SAVESTATE_NEXT_SLOT:
+			{
+				currentSavestateSlot = (currentSavestateSlot + 1)%SaveState::SAVESTATESLOTS;
+				char msg[30];
+				sprintf(msg, "Using save state slot %d.", currentSavestateSlot + 1);
+				osm.Show(msg);
+				break;
+			}
 
 			case ID_FILE_QUICKLOADSTATE:
-				SetCursor(LoadCursor(0,IDC_WAIT));
-				SaveState::LoadSlot(0, SaveStateActionFinished);
+				SetCursor(LoadCursor(0, IDC_WAIT));
+				SaveState::LoadSlot(currentSavestateSlot, SaveStateActionFinished);
 				break;
 
 			case ID_FILE_QUICKSAVESTATE:
-				SetCursor(LoadCursor(0,IDC_WAIT));
-				SaveState::SaveSlot(0, SaveStateActionFinished);
+				SetCursor(LoadCursor(0, IDC_WAIT));
+				SaveState::SaveSlot(currentSavestateSlot, SaveStateActionFinished);
 				break;
 
 			case ID_OPTIONS_SCREEN1X:
@@ -638,6 +723,13 @@ namespace MainWindow
 			case ID_OPTIONS_BUFFEREDRENDERING:
 				g_Config.bBufferedRendering = !g_Config.bBufferedRendering;
 				osm.ShowOnOff(g->T("Buffered Rendering"), g_Config.bBufferedRendering);
+				if (gpu)
+					gpu->Resized();  // easy way to force a clear...
+				break;
+
+			case ID_OPTIONS_READFBOTOMEMORY:
+				g_Config.bFramebuffersToMem = !g_Config.bFramebuffersToMem;
+				osm.ShowOnOff(g->T("Read Framebuffers To Memory"), g_Config.bFramebuffersToMem);
 				if (gpu)
 					gpu->Resized();  // easy way to force a clear...
 				break;
@@ -785,7 +877,7 @@ namespace MainWindow
 				ShellExecute(NULL, "open", "http://forums.ppsspp.org/", NULL, NULL, SW_SHOWNORMAL);
 				break;
 
-      case ID_HELP_ABOUT:
+			case ID_HELP_ABOUT:
 				DialogManager::EnableAll(FALSE);
 				DialogBox(hInst, (LPCTSTR)IDD_ABOUTBOX, hWnd, (DLGPROC)About);
 				DialogManager::EnableAll(TRUE);
@@ -801,25 +893,37 @@ namespace MainWindow
 			}
 			break;
 
-		case WM_KEYDOWN:
+		case WM_INPUT:
 			{
-				KeyInput key;
-				key.deviceId = DEVICE_ID_KEYBOARD;
-				key.flags = KEY_DOWN;
-				key.keyCode = windowsTransTable[(int)wParam];
-				if (key.keyCode)
-					NativeKey(key);
-			}
-			return 0;
+				UINT dwSize;
+				GetRawInputData((HRAWINPUT)lParam, RID_INPUT, NULL, &dwSize, sizeof(RAWINPUTHEADER));
+				if (!rawInputBuffer) {
+					rawInputBuffer = malloc(dwSize);
+					rawInputBufferSize = dwSize;
+				}
+				if (dwSize > rawInputBufferSize) {
+					rawInputBuffer = realloc(rawInputBuffer, dwSize);
+				}
+				GetRawInputData((HRAWINPUT)lParam, RID_INPUT, rawInputBuffer, &dwSize, sizeof(RAWINPUTHEADER));
+				RAWINPUT* raw = (RAWINPUT*)rawInputBuffer;
 
-		case WM_KEYUP:
-			{
-				KeyInput key;
-				key.deviceId = DEVICE_ID_KEYBOARD;
-				key.flags = KEY_UP;
-				key.keyCode = windowsTransTable[(int)wParam];
-				if (key.keyCode)
-					NativeKey(key);	
+				if (raw->header.dwType == RIM_TYPEKEYBOARD) {
+					KeyInput key;
+					key.deviceId = DEVICE_ID_KEYBOARD;
+					if (raw->data.keyboard.Message == WM_KEYDOWN || raw->data.keyboard.Message == WM_SYSKEYDOWN) {
+						key.flags = KEY_DOWN;
+						key.keyCode = windowsTransTable[GetTrueVKey(raw->data.keyboard)];
+						if (key.keyCode) {
+							NativeKey(key);
+						}
+					} else if (raw->data.keyboard.Message == WM_KEYUP) {
+						key.flags = KEY_UP;
+						key.keyCode = windowsTransTable[GetTrueVKey(raw->data.keyboard)];
+						if (key.keyCode) {
+							NativeKey(key);	
+						}
+					}
+				}
 			}
 			return 0;
 
@@ -931,6 +1035,7 @@ namespace MainWindow
 		CHECKITEM(ID_CPU_INTERPRETER,g_Config.bJit == false);
 		CHECKITEM(ID_CPU_DYNAREC,g_Config.bJit == true);
 		CHECKITEM(ID_OPTIONS_BUFFEREDRENDERING, g_Config.bBufferedRendering);
+		CHECKITEM(ID_OPTIONS_READFBOTOMEMORY, g_Config.bFramebuffersToMem);
 		CHECKITEM(ID_OPTIONS_SHOWDEBUGSTATISTICS, g_Config.bShowDebugStats);
 		CHECKITEM(ID_OPTIONS_HARDWARETRANSFORM, g_Config.bHardwareTransform);
 		CHECKITEM(ID_OPTIONS_FASTMEMORY, g_Config.bFastMemory);
@@ -1004,23 +1109,25 @@ namespace MainWindow
 		lastGlobalUIState = globalUIState;
 
 		HMENU menu = GetMenu(GetHWND());
-		EnableMenuItem(menu,ID_EMULATION_RUN, (Core_IsStepping() || globalUIState == UISTATE_PAUSEMENU) ? MF_ENABLED : MF_GRAYED);
+
+		const char* pauseMenuText =  (Core_IsStepping() || globalUIState != UISTATE_INGAME) ? "Run\tF8" : "Pause\tF8";
+		ModifyMenu(menu, ID_TOGGLE_PAUSE, MF_BYCOMMAND | MF_STRING, ID_TOGGLE_PAUSE, pauseMenuText);
 
 		UINT ingameEnable = globalUIState == UISTATE_INGAME ? MF_ENABLED : MF_GRAYED;
-		EnableMenuItem(menu,ID_EMULATION_PAUSE, ingameEnable);
+		EnableMenuItem(menu,ID_TOGGLE_PAUSE, ingameEnable);
 		EnableMenuItem(menu,ID_EMULATION_STOP, ingameEnable);
 		EnableMenuItem(menu,ID_EMULATION_RESET, ingameEnable);
 
 		UINT menuEnable = globalUIState == UISTATE_MENU ? MF_ENABLED : MF_GRAYED;
-		EnableMenuItem(menu,ID_FILE_LOAD, menuEnable);
-		EnableMenuItem(menu,ID_FILE_LOAD_MEMSTICK, menuEnable);
 		EnableMenuItem(menu,ID_FILE_SAVESTATEFILE, !menuEnable);
 		EnableMenuItem(menu,ID_FILE_LOADSTATEFILE, !menuEnable);
 		EnableMenuItem(menu,ID_FILE_QUICKSAVESTATE, !menuEnable);
 		EnableMenuItem(menu,ID_FILE_QUICKLOADSTATE, !menuEnable);
 		EnableMenuItem(menu,ID_CPU_DYNAREC, menuEnable);
 		EnableMenuItem(menu,ID_CPU_INTERPRETER, menuEnable);
+		EnableMenuItem(menu,ID_TOGGLE_PAUSE, !menuEnable);
 		EnableMenuItem(menu,ID_EMULATION_STOP, !menuEnable);
+		EnableMenuItem(menu,ID_EMULATION_RESET, !menuEnable);
 	}
 
 	// Message handler for about box.
@@ -1127,8 +1234,6 @@ namespace MainWindow
 
 	void SaveStateActionFinished(bool result, void *userdata)
 	{
-		if (!result)
-			MessageBox(0, "Savestate failure.  Using savestates between different PPSSPP versions is not supported.", "Sorry", MB_OK);
 		SetCursor(LoadCursor(0, IDC_ARROW));
 	}
 

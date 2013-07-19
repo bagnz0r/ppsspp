@@ -61,6 +61,7 @@ void Config::Load(const char *iniFileName)
 	general->Get("NumWorkerThreads", &iNumWorkerThreads, cpu_info.num_cores);
 	general->Get("EnableCheats", &bEnableCheats, false);
 	general->Get("MaxRecent", &iMaxRecent, 12);
+	general->Get("ScreenshotsAsPNG", &bScreenshotsAsPNG, false);
 
 	// Fix issue from switching from uint (hex in .ini) to int (dec)
 	if (iMaxRecent == 0)
@@ -98,7 +99,7 @@ void Config::Load(const char *iniFileName)
 #endif
 	graphics->Get("BufferedRendering", &bBufferedRendering, true);
 	graphics->Get("HardwareTransform", &bHardwareTransform, true);
-	graphics->Get("TextureFiltering", &iTexFiltering, false);
+	graphics->Get("TextureFiltering", &iTexFiltering, 1);
 	graphics->Get("SSAA", &SSAntiAliasing, 0);
 	graphics->Get("VBO", &bUseVBO, false);
 	graphics->Get("FrameSkip", &iFrameSkip, 0);
@@ -109,9 +110,13 @@ void Config::Load(const char *iniFileName)
 #else
 	graphics->Get("AnisotropyLevel", &iAnisotropyLevel, 8);
 #endif
+	if (iAnisotropyLevel > 4) {
+		iAnisotropyLevel = 4;
+	}
 	graphics->Get("VertexCache", &bVertexCache, true);
 #ifdef _WIN32
 	graphics->Get("FullScreen", &bFullScreen, false);
+	graphics->Get("FullScreenOnLaunch", &bFullScreenOnLaunch, false);
 #endif
 #ifdef BLACKBERRY
 	graphics->Get("PartialStretch", &bPartialStretch, pixel_xres == pixel_yres);
@@ -144,9 +149,6 @@ void Config::Load(const char *iniFileName)
 	control->Get("LargeControls", &bLargeControls, false);
 	// control->Get("KeyMapping",iMappingMap);
 	control->Get("AccelerometerToAnalogHoriz", &bAccelerometerToAnalogHoriz, false);
-	control->Get("ForceInputDevice", &iForceInputDevice, -1);
-	control->Get("RightStickBind", &iRightStickBind, 0);
-	control->Get("SwapDInputRightAxes", &iSwapRightAxes, 0);
 	control->Get("TouchButtonOpacity", &iTouchButtonOpacity, 65);
 	control->Get("ButtonScale", &fButtonScale, 1.15);
 
@@ -170,6 +172,8 @@ void Config::Load(const char *iniFileName)
 	debugConfig->Get("DisasmWindowH", &iDisasmWindowH, -1);
 	debugConfig->Get("ConsoleWindowX", &iConsoleWindowX, -1);
 	debugConfig->Get("ConsoleWindowY", &iConsoleWindowY, -1);
+	debugConfig->Get("FontWidth", &iFontWidth, 8);
+	debugConfig->Get("FontHeight", &iFontHeight, 12);
 
 	KeyMap::LoadFromIni(iniFile);
 
@@ -190,6 +194,7 @@ void Config::Save()
 		// Need to do this somewhere...
 		bFirstRun = false;
 		general->Set("FirstRun", bFirstRun);
+		general->Set("NewUI", bNewUI);
 
 		general->Set("AutoLoadLast", bAutoLoadLast);
 		general->Set("AutoRun", bAutoRun);
@@ -210,6 +215,7 @@ void Config::Save()
 		general->Set("NumWorkerThreads", iNumWorkerThreads);
 		general->Set("MaxRecent", iMaxRecent);
 		general->Set("EnableCheats", bEnableCheats);
+		general->Set("ScreenshotsAsPNG", bScreenshotsAsPNG);
 
 		IniFile::Section *cpu = iniFile.GetOrCreateSection("CPU");
 		cpu->Set("Jit", bJit);
@@ -232,6 +238,7 @@ void Config::Save()
 		graphics->Set("VertexCache", bVertexCache);
 #ifdef _WIN32
 		graphics->Set("FullScreen", bFullScreen);
+		graphics->Set("FullScreenOnLaunch", bFullScreenOnLaunch);
 #endif		
 #ifdef BLACKBERRY
 		graphics->Set("PartialStretch", bPartialStretch);
@@ -258,9 +265,6 @@ void Config::Save()
 		control->Set("LargeControls", bLargeControls);
 		// control->Set("KeyMapping",iMappingMap);
 		control->Set("AccelerometerToAnalogHoriz", bAccelerometerToAnalogHoriz);
-		control->Set("ForceInputDevice", iForceInputDevice);
-		control->Set("RightStickBind", iRightStickBind);
-		control->Set("SwapDInputRightAxes", iSwapRightAxes);
 		control->Set("TouchButtonOpacity", iTouchButtonOpacity);
 		control->Set("ButtonScale", fButtonScale);
 
@@ -284,6 +288,8 @@ void Config::Save()
 		debugConfig->Set("DisasmWindowH", iDisasmWindowH);
 		debugConfig->Set("ConsoleWindowX", iConsoleWindowX);
 		debugConfig->Set("ConsoleWindowY", iConsoleWindowY);
+		debugConfig->Set("FontWidth", iFontWidth);
+		debugConfig->Set("FontHeight", iFontHeight);
 
 		KeyMap::SaveToIni(iniFile);
 
@@ -319,5 +325,4 @@ void Config::CleanRecent() {
 			cleanedRecent.push_back(recentIsos[i]);
 	}
 	recentIsos = cleanedRecent;
-
 }

@@ -29,6 +29,7 @@
 #include "UI/GameScreen.h"
 #include "UI/MenuScreens.h"
 #include "UI/GameInfoCache.h"
+#include "UI/GameSettingsScreen.h"
 #include "UI/ui_atlas.h"
 #include "Core/Config.h"
 
@@ -58,7 +59,8 @@ private:
 void GameButton::Draw(UIContext &dc) {
 	GameInfo *ginfo = g_gameInfoCache.GetInfo(gamePath_, false);
 	Texture *texture = 0;
-	u32 color = 0;
+	u32 color = 0, shadowColor = 0;
+
 	if (ginfo->iconTexture) {
 		texture = ginfo->iconTexture;
 	} else {
@@ -72,6 +74,7 @@ void GameButton::Draw(UIContext &dc) {
 
 	if (texture) {
 		color = whiteAlpha(ease((time_now_d() - ginfo->timeIconWasLoaded) * 2));
+		shadowColor = blackAlpha(ease((time_now_d() - ginfo->timeIconWasLoaded) * 2));
 
 		float tw = texture->Width();
 		float th = texture->Height();
@@ -88,25 +91,28 @@ void GameButton::Draw(UIContext &dc) {
 	// Render button
 	int dropsize = 10;
 	if (texture) {
-		if (txOffset) {
-			dropsize = 3;
-			y += txOffset * 2;
+		if (HasFocus()) {
+			// dc.Draw()->DrawImage4Grid(I_DROP_SHADOW, x - dropsize, y, x+w + dropsize, y+h+dropsize*1.5, 	alphaMul(color, 0.5f), 1.0f);
+			// dc.Draw()->Flush();
+		} else {
+			if (txOffset) {
+				dropsize = 3;
+				y += txOffset * 2;
+			}
+			dc.Draw()->DrawImage4Grid(I_DROP_SHADOW, x - dropsize, y, x+w + dropsize, y+h+dropsize*1.5, 	alphaMul(shadowColor, 0.5f), 1.0f);
+			dc.Draw()->Flush();
 		}
-		dc.Draw()->DrawImage4Grid(I_DROP_SHADOW, x - dropsize, y, x+w + dropsize, y+h+dropsize*1.5, 	alphaMul(color, 0.5f), 1.0f);
-		dc.Draw()->Flush();
 	}
 
 	if (texture) {
+		dc.Draw()->Flush();
 		texture->Bind(0);
 		dc.Draw()->DrawTexRect(x, y, x+w, y+h, 0, 0, 1, 1, color);
 		dc.Draw()->Flush();
+		dc.RebindTexture();
 	} else {
 		dc.FillRect(dc.theme->buttonStyle.background, bounds_);
-		dc.Draw()->Flush();
-		Texture::Unbind();
 	}
-	
-	dc.RebindTexture();
 }
 
 // Abstraction above path that lets you navigate easily.
@@ -181,7 +187,7 @@ void PathBrowser::Navigate(const std::string &path) {
 		if (path_.size() == 3 && path_[1] == ':') {
 			path_ = "/";
 		} else {
-			int slash = path_.rfind('/', path_.size() - 2);
+			size_t slash = path_.rfind('/', path_.size() - 2);
 			if (slash != std::string::npos)
 				path_ = path_.substr(0, slash + 1);
 		}
@@ -212,9 +218,8 @@ private:
 	UI::EventReturn GameButtonClick(UI::EventParams &e);
 	UI::EventReturn NavigateClick(UI::EventParams &e);
 
-
-	bool allowBrowsing_;
 	PathBrowser path_;
+	bool allowBrowsing_;
 };
 
 GameBrowser::GameBrowser(std::string path, bool allowBrowsing, UI::LayoutParams *layoutParams) 
@@ -341,6 +346,12 @@ void MainScreen::CreateViews() {
 	rightColumnItems->Add(new Choice("Support PPSSPP"))->OnClick.Handle(this, &MainScreen::OnSupport);
 }
 
+void MainScreen::sendMessage(const char *message, const char *value) {
+	if (!strcmp(message, "boot")) {
+		screenManager()->switchScreen(new EmuScreen(value));
+	}
+}
+
 void DrawBackground(float alpha);
 
 void MainScreen::DrawBackground(UIContext &dc) {
@@ -362,7 +373,8 @@ UI::EventReturn MainScreen::OnGameSelected(UI::EventParams &e) {
 }
 
 UI::EventReturn MainScreen::OnSettings(UI::EventParams &e) {
-	screenManager()->push(new SettingsScreen());
+	// screenManager()->push(new SettingsScreen());
+	screenManager()->push(new GlobalSettingsScreen());
 	return UI::EVENT_DONE;
 }
 
@@ -372,6 +384,11 @@ UI::EventReturn MainScreen::OnCredits(UI::EventParams &e) {
 }
 
 UI::EventReturn MainScreen::OnSupport(UI::EventParams &e) {
+#ifdef ANDROID
+	LaunchBrowser("market://details?id=org.ppsspp.ppssppgold");
+#else
+	LaunchBrowser("http://central.ppsspp.org/buygold");
+#endif
 	return UI::EVENT_DONE;
 }
 

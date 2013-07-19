@@ -133,6 +133,16 @@ void CenterRect(float *x, float *y, float *w, float *h,
 	}
 }
 
+void FramebufferManager::CompileDraw2DProgram() {
+	if (!draw2dprogram) {
+		draw2dprogram = glsl_create_source(basic_vs, tex_fs);
+
+		glsl_bind(draw2dprogram);
+		glUniform1i(draw2dprogram->sampler0, 0);
+		glsl_unbind();
+	}
+}
+
 FramebufferManager::FramebufferManager() :
 	ramDisplayFramebufPtr_(0),
 	displayFramebufPtr_(0),
@@ -145,18 +155,15 @@ FramebufferManager::FramebufferManager() :
 	currentRenderVfb_(0),
 	drawPixelsTex_(0),
 	drawPixelsTexFormat_(-1),
-	convBuf(0)
+	convBuf(0),
+	draw2dprogram(0)
 #ifndef USING_GLES2
 	,
 	pixelBufObj_(0),
 	currentPBO_(0)
 #endif
 {
-	draw2dprogram = glsl_create_source(basic_vs, tex_fs);
-
-	glsl_bind(draw2dprogram);
-	glUniform1i(draw2dprogram->sampler0, 0);
-	glsl_unbind();
+	CompileDraw2DProgram();
 
 	// And an initial clear. We don't clear per frame as the games are supposed to handle that
 	// by themselves.
@@ -197,7 +204,9 @@ FramebufferManager::FramebufferManager() :
 FramebufferManager::~FramebufferManager() {
 	if (drawPixelsTex_)
 		glDeleteTextures(1, &drawPixelsTex_);
-	glsl_destroy(draw2dprogram);
+	if (draw2dprogram) {
+		glsl_destroy(draw2dprogram);
+	}
 
 #ifndef USING_GLES2
 	delete [] pixelBufObj_;
@@ -316,8 +325,9 @@ void FramebufferManager::DrawActiveTexture(float x, float y, float w, float h, b
 	const float pos[12] = {x,y,0, x+w,y,0, x+w,y+h,0, x,y+h,0};
 	const float texCoords[8] = {0,v1, u2,v1, u2,v2, 0,v2};
 	const GLubyte indices[4] = {0,1,3,2};
-
+	
 	if(!program) {
+		CompileDraw2DProgram();
 		program = draw2dprogram;
 	}
 
@@ -375,24 +385,27 @@ void GetViewportDimensions(int &w, int &h) {
 
 // Heuristics to figure out the size of FBO to create.
 void GuessDrawingSize(int &drawing_width, int &drawing_height) {
-	GetViewportDimensions(drawing_width, drawing_height);
+	int viewport_width, viewport_height;
+	int default_width = 480; 
+	int default_height = 272;
+	int regionX2 = (gstate.getRegionX2() + 1) ;
+	int regionY2 = (gstate.getRegionY2() + 1) ;
+	int fb_stride = gstate.fbwidth & 0x3C0;
+	GetViewportDimensions(viewport_width, viewport_height);
 
-	// HACK for first frame where some games don't init things right
-	if (drawing_width <= 1 && drawing_height <= 1) {
-		drawing_width = 480;
-		drawing_height = 272;
+	// Generated FBO shouldn't greate than 512x512
+	if ( viewport_width > 512 && viewport_height > 512 ) {
+		viewport_width = default_width;
+		viewport_height = default_height;
 	}
 
-	// Now, cap using scissor. Hm, no, this doesn't work so well.
-	/*
-	if (drawing_width > gstate.getScissorX2() + 1)
-		drawing_width = gstate.getScissorX2() + 1;
-	if (drawing_height > gstate.getScissorY2() + 1)
-		drawing_height = gstate.getScissorY2() + 1;*/
-	
-	// Cap at maximum texture size for now. Don't see much point in drawing bigger.
-	drawing_width = std::min(drawing_width, 512);
-	drawing_height = std::min(drawing_height, 512);
+	if (fb_stride < 512) {
+		drawing_width = std::min(viewport_width, regionX2);
+		drawing_height = std::min(viewport_height, regionY2);
+	} else {
+		drawing_width = std::max(viewport_width, default_width);
+		drawing_height = std::max(viewport_height, default_height);
+	}
 }
 
 void FramebufferManager::DestroyFramebuf(VirtualFramebuffer *v) {
@@ -430,21 +443,16 @@ void FramebufferManager::SetRenderFrameBuffer() {
 	int z_stride = gstate.zbwidth & 0x3C0;
 
 	// Yeah this is not completely right. but it'll do for now.
-	int drawing_width = ((gstate.region2) & 0x3FF) + 1;
-	int drawing_height = ((gstate.region2 >> 10) & 0x3FF) + 1;
-
-	if (drawing_width > gstate.getScissorX2() + 1)
-		drawing_width = gstate.getScissorX2() + 1;
-	if (drawing_height > gstate.getScissorY2() + 1)
-		drawing_height = gstate.getScissorY2() + 1;
+	//int drawing_width = ((gstate.region2) & 0x3FF) + 1;
+	//int drawing_height = ((gstate.region2 >> 10) & 0x3FF) + 1;
 		
 	// As there are no clear "framebuffer width" and "framebuffer height" registers,
 	// we need to infer the size of the current framebuffer somehow. Let's try the viewport.
 	
 	int fmt = gstate.framebufpixformat & 3;
 
-	//int drawing_width, drawing_height;
-	//GuessDrawingSize(drawing_width, drawing_height);
+	int drawing_width, drawing_height;
+	GuessDrawingSize(drawing_width, drawing_height);
 
 	int buffer_width = drawing_width;
 	int buffer_height = drawing_height;
@@ -462,6 +470,7 @@ void FramebufferManager::SetRenderFrameBuffer() {
 				// Update fb stride in case it changed
 				vfb->fb_stride = fb_stride;
 				// Just hack the width/height and we should be fine. also hack renderwidth/renderheight?
+				// This hack gonna breaks Kingdom Heart and causing black bar on the left side.
 				v->width = drawing_width;
 				v->height = drawing_height;
 				break;
@@ -832,6 +841,8 @@ void FramebufferManager::BlitFramebuffer_(VirtualFramebuffer *src, VirtualFrameb
 	float x, y, w, h;
 	CenterRect(&x, &y, &w, &h, 480.0f, 272.0f, (float)PSP_CoreParameter().pixelWidth, (float)PSP_CoreParameter().pixelHeight);
 
+	CompileDraw2DProgram();
+
 	DrawActiveTexture(x, y, w, h, flip, upscale, vscale, draw2dprogram);
 	
 	glBindTexture(GL_TEXTURE_2D, 0);
@@ -1089,6 +1100,8 @@ void FramebufferManager::EndFrame() {
 
 void FramebufferManager::DeviceLost() {
 	DestroyAllFBOs();
+	glsl_destroy(draw2dprogram);
+	draw2dprogram = 0;
 	resized_ = false;
 }
 
@@ -1214,6 +1227,7 @@ void FramebufferManager::UpdateFromMemory(u32 addr, int size) {
 		for (size_t i = 0; i < vfbs_.size(); ++i) {
 			VirtualFramebuffer *vfb = vfbs_[i];
 			if (MaskedEqual(vfb->fb_address, addr)) {
+				vfb->dirtyAfterDisplay = true;
 				// TODO: This without the fbo_unbind() above would be better than destroying the FBO.
 				// However, it doesn't seem to work for Star Ocean, at least
 				if (g_Config.bBufferedRendering) {

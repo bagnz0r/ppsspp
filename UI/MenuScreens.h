@@ -30,15 +30,16 @@ class LogoScreen : public Screen
 public:
 	LogoScreen(const std::string &bootFilename)
 		: bootFilename_(bootFilename), frames_(0) {}
+	void key(const KeyInput &key);
 	void update(InputState &input);
 	void render();
 	void sendMessage(const char *message, const char *value);
 
 private:
+	void Next();
 	std::string bootFilename_;
 	int frames_;
 };
-
 
 class MenuScreen : public Screen
 {
@@ -61,6 +62,25 @@ public:
 	void update(InputState &input);
 	void render();
 	virtual void sendMessage(const char *msg, const char *value);
+
+	struct Message
+	{
+		Message(const char *m, const char *v)
+			: msg(m), value(v) {}
+
+		const char *msg;
+		const char *value;
+	};
+
+	virtual void *dialogData()
+	{
+		return m_data;
+	}
+
+	PauseScreen() : m_data(NULL) {}
+
+private:
+	Message* m_data;
 };
 
 
@@ -150,16 +170,22 @@ public:
 		pspBtn = btn;
 		last_kb_deviceid = 0;
 		last_kb_key = 0;
+		last_axis_deviceid = 0;
+		last_axis_id = -1;
 		currentMap_ = currentMap;
 	}
 	void update(InputState &input);
 	void render();
 	void key(const KeyInput &key);
+	void axis(const AxisInput &axis);
 
 private:
 	int pspBtn;
 	int last_kb_deviceid;
 	int last_kb_key;
+	int last_axis_deviceid;
+	int last_axis_id;
+	int last_axis_direction;
 	int currentMap_;
 };
 
@@ -181,6 +207,7 @@ public:
 	// Override these to for example write the current directory to a config file.
 	virtual void onSelectFile() {}
 	virtual void onCancel() {}
+	void key(const KeyInput &key);
 
 private:
 	void updateListing();
@@ -201,20 +228,5 @@ public:
 private:
 	int frames_;
 };
-
-
-// Dialog box, meant to be pushed
-class ErrorScreen : public Screen
-{
-public:
-	ErrorScreen(const std::string &errorTitle, const std::string &errorMessage) : errorTitle_(errorTitle), errorMessage_(errorMessage) {}
-	void update(InputState &input);
-	void render();
-
-private:
-	std::string errorTitle_;
-	std::string errorMessage_;
-};
-
 
 void DrawWatermark();

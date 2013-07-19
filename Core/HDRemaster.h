@@ -24,27 +24,22 @@
 // We keep it set to false by default in PSPLoaders.cpp
 // in order to keep the 99% of other PSP games working happily.
 extern bool g_RemasterMode;
+
 extern bool g_DoubleTextureCoordinates;
 
 struct HDRemaster {
 	std::string gameID;
-	u64 MemorySize;
-	u64 MemoryEnd; //Seems to be different for each game as well
+	u32 MemorySize;
 	bool DoubleTextureCoordinates;
 };
 
-// TODO: Are those BLJM* IDs really valid? They seem to be the physical PS3 disk IDs,
-// but they're included for safety.
-// TODO: Do all of the remasters aside from Monster Hunter use double texture coordinates?
-// TODO: Are all remasters happy with this end address?
+// TODO: Use UMD_DATA.bin to differentiate the Eiyuu games from the regular PSP editions.
+// TODO: Do all of the remasters aside from Monster Hunter/Shin Sangoku use double texture coordinates?
 const struct HDRemaster g_HDRemasters[] = {
-	{ "NPJB40001", 0x4000000, 0x0BBFFFFF, false }, // MONSTER HUNTER PORTABLE 3rd HD Ver.
-	{ "BLJM85002", 0x4000000, 0x0BBFFFFF, true }, // K-ON Houkago Live HD Ver
-	{ "NPJB40002", 0x4000000, 0x0BBFFFFF, true }, // K-ON Houkago Live HD Ver
-	{ "BLJM85003", 0x4000000, 0x0BBFFFFF, true }, // Shin Sangoku Musou Multi Raid 2 HD Ver
-	{ "NPJB40003", 0x4000000, 0x0BBFFFFF, true }, // Shin Sangoku Musou Multi Raid 2 HD Ver
-	{ "BLJM85004", 0x4000000, 0x0BBFFFFF, true }, // Eiyuu Densetsu Sora no Kiseki FC Kai HD Edition
-	{ "NPJB40004", 0x4000000, 0x0BBFFFFF, true }, // Eiyuu Densetsu Sora no Kiseki FC Kai HD Edition
-	{ "BLJM85005", 0x4000000, 0x0BBFFFFF, true }, // Eiyuu Densetsu: Sora no Kiseki SC Kai HD Edition
-	{ "NPJB40005", 0x4000000, 0x0BBFFFFF, true }, // Eiyuu Densetsu: Sora no Kiseki SC Kai HD Edition
+	{ "NPJB40001", 0x4000000, false }, // MONSTER HUNTER PORTABLE 3rd HD Ver.
+	{ "NPJB40002", 0x4000000, true }, // K-ON Houkago Live HD Ver
+	{ "NPJB40003", 0x4000000, false }, // Shin Sangoku Musou Multi Raid 2 HD Ver
+	// { "ULJM05170", 0x4000000, true }, // Eiyuu Densetsu Sora no Kiseki FC Kai HD Edition
+	// { "ULJM05277", 0x4C00000, true }, // Eiyuu Densetsu: Sora no Kiseki SC Kai HD Edition, game needs 76 MB
+	// { "ULJM05353", 0x4C00000, true }, // Eiyuu Densetsu: Sora no Kiseki 3rd Kai HD Edition, game needs 76 MB
 };

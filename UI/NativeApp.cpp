@@ -34,6 +34,7 @@
 #include "base/NativeApp.h"
 #include "file/vfs.h"
 #include "file/zip_read.h"
+#include "native/ext/stb_image_write/stb_image_writer.h"
 #include "native/ext/jpge/jpge.h"
 #include "gfx_es2/gl_state.h"
 #include "gfx/gl_lost_manager.h"
@@ -216,13 +217,8 @@ void NativeInit(int argc, const char *argv[],
 	setlocale( LC_ALL, "C" );
 	std::string user_data_path = savegame_directory;
 	isMessagePending = false;
-	// We want this to be FIRST.
-#ifndef USING_QT_UI
-#ifdef BLACKBERRY
-	// Packed assets are included in app/native/ dir
-	VFSRegister("", new DirectoryAssetReader("app/native/assets/"));
-#elif defined(IOS)
-	VFSRegister("", new DirectoryAssetReader(external_directory));
+
+#ifdef IOS
 	user_data_path += "/";
 #elif defined(__APPLE__)
     char program_path[4090];
@@ -232,12 +228,18 @@ void NativeInit(int argc, const char *argv[],
     char assets_path[4096];
     sprintf(assets_path,"%sassets/",program_path);
     VFSRegister("", new DirectoryAssetReader(assets_path));
-    VFSRegister("", new DirectoryAssetReader("assets/"));
+#endif
+
+	// We want this to be FIRST.
+#ifndef USING_QT_UI
+#if defined(BLACKBERRY) || defined(IOS)
+	// Packed assets are included in app
+	VFSRegister("", new DirectoryAssetReader(external_directory));
 #else
 	VFSRegister("", new DirectoryAssetReader("assets/"));
 #endif
 #endif
-	VFSRegister("", new DirectoryAssetReader(user_data_path.c_str()));
+	VFSRegister("", new DirectoryAssetReader(savegame_directory));
 
 	host = new NativeHost();
 
@@ -329,21 +331,13 @@ void NativeInit(int argc, const char *argv[],
 	// that for most people, using external memory (SDCard/USB Storage) makes the
 	// most sense.
 	g_Config.memCardDirectory = std::string(external_directory) + "/";
-	g_Config.flashDirectory = std::string(external_directory)+"/flash/";
+	g_Config.flashDirectory = std::string(external_directory)+"/flash0/";
 #elif defined(BLACKBERRY) || defined(__SYMBIAN32__) || defined(MEEGO_EDITION_HARMATTAN) || defined(IOS) || defined(_WIN32)
 	g_Config.memCardDirectory = user_data_path;
-#ifdef BLACKBERRY
-	g_Config.flashDirectory = "app/native/assets/flash/";
-#elif defined(IOS)
-	g_Config.flashDirectory = std::string(external_directory) + "flash0/";
-#elif defined(MEEGO_EDITION_HARMATTAN)
-	g_Config.flashDirectory = "/opt/PPSSPP/flash/";
-#else
-	g_Config.flashDirectory = user_data_path+"/flash/";
-#endif
+	g_Config.flashDirectory = std::string(external_directory)+"flash0/";
 #else
 	g_Config.memCardDirectory = std::string(getenv("HOME"))+"/.ppsspp/";
-	g_Config.flashDirectory = g_Config.memCardDirectory+"/flash/";
+	g_Config.flashDirectory = g_Config.memCardDirectory+"/flash0/";
 #endif
 
 	for (int i = 0; i < LogTypes::NUMBER_OF_LOGS; i++)
@@ -373,11 +367,7 @@ void NativeInit(int argc, const char *argv[],
 		SaveState::Load(stateToLoad);
 	
 	g_gameInfoCache.Init();
-}
 
-void NativeInitGraphics() {
-	gl_lost_manager_init();
-	ui_draw2d.SetAtlas(&ui_atlas);
 
 	screenManager = new ScreenManager();
 
@@ -394,6 +384,12 @@ void NativeInitGraphics() {
 		// Go directly into the game.
 		screenManager->switchScreen(new EmuScreen(boot_filename));
 	}
+}
+
+void NativeInitGraphics() {
+	gl_lost_manager_init();
+	ui_draw2d.SetAtlas(&ui_atlas);
+
 
 	UIShader_Init();
 
@@ -415,6 +411,7 @@ void NativeInitGraphics() {
 	ui_theme.checkOn = I_CHECKEDBOX;
 	ui_theme.checkOff = I_SQUARE;
 	ui_theme.whiteImage = SOLIDWHITE;
+	ui_theme.sliderKnob = I_CIRCLE;
 	ui_theme.buttonStyle.background = UI::Drawable(UI::DRAW_4GRID, I_BUTTON);
 	ui_theme.buttonStyle.fgColor = 0xFFFFFFFF;
 	ui_theme.buttonStyle.image = I_BUTTON;
@@ -456,6 +453,25 @@ void NativeInitGraphics() {
 	glstate.viewport.set(0, 0, pixel_xres, pixel_yres);
 }
 
+void NativeShutdownGraphics() {
+	screenManager->deviceLost();
+
+	g_gameInfoCache.Clear();
+
+	delete uiTexture;
+	uiTexture = NULL;
+
+	delete uiContext;
+	uiContext = NULL;
+
+	ui_draw2d.Shutdown();
+	ui_draw2d_front.Shutdown();
+
+	UIShader_Shutdown();
+
+	gl_lost_manager_shutdown();
+}
+
 void TakeScreenshot() {
 #ifdef _WIN32
 	g_TakeScreenshot = false;
@@ -465,8 +481,11 @@ void TakeScreenshot() {
 	int i = 0;
 
 	char temp[256];
-	while (i < 10000) {
-		sprintf(temp, "screenshots/screen%05d.jpg", i);
+	while (i < 10000){
+		if(g_Config.bScreenshotsAsPNG)
+			sprintf(temp, "screenshots/screen%05d.png", i);
+		else
+			sprintf(temp, "screenshots/screen%05d.jpg", i);
 		FileInfo info;
 		if (!getFileInfo(temp, &info))
 			break;
@@ -484,9 +503,14 @@ void TakeScreenshot() {
 		memcpy(flipbuffer + y * pixel_xres * 4, buffer + (pixel_yres - y - 1) * pixel_xres * 4, pixel_xres * 4);
 	}
 
-	jpge::params params;
-	params.m_quality = 90;
-	compress_image_to_jpeg_file(temp, pixel_xres, pixel_yres, 4, flipbuffer, params);
+	if(g_Config.bScreenshotsAsPNG)
+		stbi_write_png(temp, pixel_xres, pixel_yres, 4, flipbuffer, pixel_xres * 4);
+	else
+	{
+		jpge::params params;
+		params.m_quality = 90;
+		compress_image_to_jpeg_file(temp, pixel_xres, pixel_yres, 4, flipbuffer, params);
+	}
 
 	delete [] buffer;
 	delete [] flipbuffer;
@@ -531,7 +555,7 @@ void NativeUpdate(InputState &input) {
 
 	UIUpdateMouse(0, input.pointer_x[0], input.pointer_y[0], input.pointer_down[0]);
 	screenManager->update(input);
-} 
+}
 
 void NativeDeviceLost() {
 	g_gameInfoCache.Clear();
@@ -551,6 +575,7 @@ void NativeTouch(const TouchInput &touch) {
 }
 
 void NativeKey(const KeyInput &key) {
+	g_buttonTracker.Process(key);
 	if (screenManager)
 		screenManager->key(key);
 }
@@ -570,23 +595,12 @@ void NativeMessageReceived(const char *message, const char *value) {
 	}
 }
 
-void NativeShutdownGraphics() {
-	delete uiTexture;
-	uiTexture = NULL;
 
+void NativeShutdown() {
 	screenManager->shutdown();
 	delete screenManager;
 	screenManager = 0;
 
-	ui_draw2d.Shutdown();
-	ui_draw2d_front.Shutdown();
-
-	UIShader_Shutdown();
-
-	gl_lost_manager_shutdown();
-}
-
-void NativeShutdown() {
 	g_gameInfoCache.Shutdown();
 
 	delete host;
@@ -599,6 +613,7 @@ void NativeShutdown() {
 	// boot up correctly with "dirty" global variables currently, so we hack around that
 	// by simply exiting.
 #ifdef ANDROID
+	ELOG("NativeShutdown called");
 	exit(0);
 #endif
 }

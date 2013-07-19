@@ -49,6 +49,7 @@ public:
 	// General
 	bool bNewUI;  // "Hidden" setting, does not get saved to ini file.
 	int iNumWorkerThreads;
+	bool bScreenshotsAsPNG;
 
 	// Core
 	bool bIgnoreBadMemAccess;
@@ -79,7 +80,10 @@ public:
 	bool SSAntiAliasing; // for Windows, too
 	bool bVertexCache;
 	bool bFullScreen;
-	int iAnisotropyLevel;
+#ifdef _WIN32
+	bool bFullScreenOnLaunch;
+#endif
+	int iAnisotropyLevel;  // 0 - 5, powers of 2: 0 = 1x = no aniso
 	bool bTrueColor;
 	bool bFramebuffersToMem;
 	bool bFramebuffersCPUConvert; // for OpenGL devices
@@ -107,17 +111,8 @@ public:
 	bool bShowDebugStats;
 	bool bLargeControls;
 	bool bAccelerometerToAnalogHoriz;
-	// Temporary until control mapping rewrite
-	// 0 = none
-	// 1 = arrow buttons
-	// 2 = face buttons
-	// 3 = L/R
-	// 4 = L/R + triangle/cross
-	int iRightStickBind;
-	int iSwapRightAxes;
 
 	// Control
-	int iForceInputDevice;
 	int iTouchButtonOpacity;
 	float fButtonScale;
 
@@ -141,6 +136,8 @@ public:
 	int iDisasmWindowH;
 	int iConsoleWindowX;
 	int iConsoleWindowY;
+	int iFontWidth;
+	int iFontHeight;
 
 	std::string currentDirectory;
 	std::string externalDirectory; 

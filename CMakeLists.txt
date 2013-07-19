@@ -47,7 +47,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	set(USE_FFMPEG ON)
 endif()
 
-if(ANDROID OR BLACKBERRY OR IOS OR PANDORA OR MAEMO OR MACOSX)
+if(ANDROID OR BLACKBERRY OR IOS OR PANDORA OR MAEMO OR MACOSX OR LINUX)
 	set(HEADLESS OFF)
 elseif(NOT DEFINED HEADLESS)
 	set(HEADLESS ON)
@@ -580,7 +580,6 @@ add_library(native STATIC
 	native/image/zim_save.h
 	native/input/gesture_detector.cpp
 	native/input/gesture_detector.h
-	native/input/input_state.cpp
 	native/input/keycodes.h
 	native/input/input_state.h
 	native/input/input_state.cpp
@@ -1102,6 +1101,7 @@ set(NativeAppSource
 	android/jni/TestRunner.cpp
 	UI/GameInfoCache.cpp
 	UI/MainScreen.cpp
+	UI/MiscScreens.cpp
 	UI/MenuScreens.cpp
 	UI/GameScreen.cpp
 	UI/GameSettingsScreen.cpp
@@ -1125,6 +1125,8 @@ if(USE_FFMPEG AND NOT DEFINED FFMPEG_BUILDDIR)
 		set(PLATFORM_ARCH "ios/universal")
 	elseif(MACOSX)
 		set(PLATFORM_ARCH "macosx/x86_64")
+	elseif(LINUX)
+		set(PLATFORM_ARCH "linux/x86_64")
 	endif()
 	# Using static libraries
 	if (DEFINED PLATFORM_ARCH)

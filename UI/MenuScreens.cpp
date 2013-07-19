@@ -60,6 +60,7 @@
 #include "UI/EmuScreen.h"
 #include "UI/PluginScreen.h"
 #include "UI/MainScreen.h"
+#include "UI/MiscScreens.h"
 
 #include "GameInfoCache.h"
 #include "android/jni/TestRunner.h"
@@ -137,23 +138,33 @@ void DrawWatermark() {
 	// ui_draw2d.DrawTextShadow(UBUNTU24, "PRIVATE BUILD", dp_xres / 2, 10, 0xFF0000FF, ALIGN_HCENTER);
 }
 
+void LogoScreen::Next() {
+	if (bootFilename_.size()) {
+		screenManager()->switchScreen(new EmuScreen(bootFilename_));
+	} else {
+		if (g_Config.bNewUI)
+			screenManager()->switchScreen(new MainScreen());
+		else
+			screenManager()->switchScreen(new MenuScreen());
+	}
+}
+
 void LogoScreen::update(InputState &input_state) {
 	frames_++;
 	if (frames_ > 180 || input_state.pointer_down[0]) {
-		if (bootFilename_.size()) {
-			screenManager()->switchScreen(new EmuScreen(bootFilename_));
-		} else {
-			if (g_Config.bNewUI)
-				screenManager()->switchScreen(new MainScreen());
-			else
-				screenManager()->switchScreen(new MenuScreen());
-		}
+		Next();
 	}
 }
 
 void LogoScreen::sendMessage(const char *message, const char *value) {
 	if (!strcmp(message, "boot")) {
 		screenManager()->switchScreen(new EmuScreen(value));
+	}
+}
+
+void LogoScreen::key(const KeyInput &key) {
+	if (key.deviceId != DEVICE_ID_MOUSE) {
+		Next();
 	}
 }
 
@@ -174,13 +185,13 @@ void LogoScreen::render() {
 	sprintf(temp, "%s Henrik Rydgård", c->T("created", "Created by"));
 
 	ui_draw2d.SetFontScale(1.5f, 1.5f);
-	ui_draw2d.DrawText(UBUNTU48, "PPSSPP", dp_xres / 2, dp_yres / 2 - 30, colorAlpha(0xFFFFFFFF, alphaText), ALIGN_CENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU48, "PPSSPP", dp_xres / 2, dp_yres / 2 - 30, colorAlpha(0xFFFFFFFF, alphaText), ALIGN_CENTER);
 	ui_draw2d.SetFontScale(1.0f, 1.0f);
-	ui_draw2d.DrawText(UBUNTU24, temp, dp_xres / 2, dp_yres / 2 + 40, colorAlpha(0xFFFFFFFF, alphaText), ALIGN_CENTER);
-	ui_draw2d.DrawText(UBUNTU24, c->T("license", "Free Software under GPL 2.0"), dp_xres / 2, dp_yres / 2 + 70, colorAlpha(0xFFFFFFFF, alphaText), ALIGN_CENTER);
-	ui_draw2d.DrawText(UBUNTU24, "www.ppsspp.org", dp_xres / 2, dp_yres / 2 + 130, colorAlpha(0xFFFFFFFF, alphaText), ALIGN_CENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, temp, dp_xres / 2, dp_yres / 2 + 40, colorAlpha(0xFFFFFFFF, alphaText), ALIGN_CENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, c->T("license", "Free Software under GPL 2.0"), dp_xres / 2, dp_yres / 2 + 70, colorAlpha(0xFFFFFFFF, alphaText), ALIGN_CENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, "www.ppsspp.org", dp_xres / 2, dp_yres / 2 + 130, colorAlpha(0xFFFFFFFF, alphaText), ALIGN_CENTER);
 	if (bootFilename_.size()) {
-		ui_draw2d.DrawText(UBUNTU24, bootFilename_.c_str(), dp_xres / 2, dp_yres / 2 + 180, colorAlpha(0xFFFFFFFF, alphaText), ALIGN_CENTER);
+		ui_draw2d.DrawTextShadow(UBUNTU24, bootFilename_.c_str(), dp_xres / 2, dp_yres / 2 + 180, colorAlpha(0xFFFFFFFF, alphaText), ALIGN_CENTER);
 	}
 
 	DrawWatermark();
@@ -299,7 +310,7 @@ void MenuScreen::render() {
 
 	int recentW = 350;
 	if (g_Config.recentIsos.size()) {
-		ui_draw2d.DrawText(UBUNTU24, m->T("Recent"), -xoff, 80, 0xFFFFFFFF, ALIGN_BOTTOMLEFT);
+		ui_draw2d.DrawTextShadow(UBUNTU24, m->T("Recent"), -xoff, 80, 0xFFFFFFFF, ALIGN_BOTTOMLEFT);
 	}
 
 	int spacing = 15;
@@ -385,8 +396,10 @@ void PauseScreen::update(InputState &input) {
 void PauseScreen::sendMessage(const char *msg, const char *value) {
 	if (!strcmp(msg, "run")) {
 		screenManager()->finishDialog(this, DR_CANCEL);
-	} else if (!strcmp(msg, "stop")) {
-		screenManager()->finishDialog(this, DR_OK);
+	} else if (!strcmp(msg, "stop") || !strcmp(msg, "reset") || !strcmp(msg, "boot")) {
+		// Close the menu and send the events to EmuScreen
+		m_data = new PauseScreen::Message(msg, value);
+		screenManager()->finishDialog(this, DR_YES);
 	}
 }
 
@@ -423,8 +436,8 @@ void PauseScreen::render() {
 	if (ginfo && ginfo->pic0Texture) {
 		ginfo->pic0Texture->Bind(0);
 		// Pic0 is drawn in the bottom right corner, overlaying pic1.
-		float sizeX = dp_xres / 480 * ginfo->pic0Texture->Width();
-		float sizeY = dp_yres / 272 * ginfo->pic0Texture->Height();
+		float sizeX = dp_xres / 480 * ginfo->pic0Texture->Width() * 0.5;
+		float sizeY = dp_yres / 272 * ginfo->pic0Texture->Height() * 0.5;
 		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 2)) & 0xFFc0c0c0;
 		ui_draw2d.DrawTexRect(dp_xres - sizeX, dp_yres - sizeY, dp_xres, dp_yres, 0,0,1,1,color);
 		ui_draw2d.Flush();
@@ -447,7 +460,7 @@ void PauseScreen::render() {
 		ctx->RebindTexture();
 	}
 
-	ui_draw2d.DrawText(UBUNTU24, title.c_str(), 10+144+10, 30, 0xFFFFFFFF, ALIGN_LEFT);
+	ui_draw2d.DrawTextShadow(UBUNTU24, title.c_str(), 10+144+10, 30, 0xFFFFFFFF, ALIGN_LEFT);
 
 	I18NCategory *i = GetI18NCategory("Pause");
 
@@ -494,12 +507,10 @@ void PauseScreen::render() {
 			gpu->Resized();
 	}
 	if (g_Config.bBufferedRendering) {
-		bool memory = !g_Config.bFramebuffersToMem;
-		if (UICheckBox(GEN_ID, x + 60, y += stride, gs->T("Skip Updating PSP Memory"), ALIGN_TOPLEFT, &memory)) { 
+		if (UICheckBox(GEN_ID, x + 60, y += stride, gs->T("Read Framebuffers To Memory"), ALIGN_TOPLEFT, &g_Config.bFramebuffersToMem)) { 
 			if (gpu)
 				gpu->Resized();
 		}
-		g_Config.bFramebuffersToMem = memory ? 0 : 1; 
 		if (UICheckBox(GEN_ID, x + 60, y += stride, gs->T("AA", "Anti-Aliasing"), ALIGN_TOPLEFT, &g_Config.SSAntiAliasing)) {
 			if (gpu)
 				gpu->Resized();
@@ -513,7 +524,7 @@ void PauseScreen::render() {
 
 		char showFrameSkip[256];
 		sprintf(showFrameSkip, "%s %d", gs->T("Frames :"), g_Config.iFrameSkip);
-		ui_draw2d.DrawText(UBUNTU24, showFrameSkip, x + 60, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+		ui_draw2d.DrawTextShadow(UBUNTU24, showFrameSkip, x + 60, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
 		HLinear hlinear2(x + 220, y, 20);
 		if (UIButton(GEN_ID, hlinear2, 80, 0, gs->T("Auto"), ALIGN_LEFT))
 			g_Config.iFrameSkip = 3;
@@ -528,7 +539,7 @@ void PauseScreen::render() {
 		g_Config.iFrameSkip = 0;
 	
 	y+=10;
-	ui_draw2d.DrawText(UBUNTU24, gs->T("Save State :"), 30, y += 40, 0xFFFFFFFF, ALIGN_LEFT);
+	ui_draw2d.DrawTextShadow(UBUNTU24, gs->T("Save State :"), 30, y += 40, 0xFFFFFFFF, ALIGN_LEFT);
 	HLinear hlinear4(x + 180 , y , 10);
 	if (UIButton(GEN_ID, hlinear4, 60, 0, "1", ALIGN_LEFT)) {
 		SaveState::SaveSlot(0, 0, 0);
@@ -551,7 +562,7 @@ void PauseScreen::render() {
 		screenManager()->finishDialog(this, DR_CANCEL);
 	}
 
-	ui_draw2d.DrawText(UBUNTU24, gs->T("Load State :"), 30, y += 60, 0xFFFFFFFF, ALIGN_LEFT);
+	ui_draw2d.DrawTextShadow(UBUNTU24, gs->T("Load State :"), 30, y += 60, 0xFFFFFFFF, ALIGN_LEFT);
 	HLinear hlinear3(x + 180 , y + 10 , 10);
 	if (UIButton(GEN_ID, hlinear3, 60, 0, "1", ALIGN_LEFT)) {
 		SaveState::LoadSlot(0, 0, 0);
@@ -590,12 +601,24 @@ void SettingsScreen::render() {
 	UIShader_Prepare();
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
+	
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
 
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	} 
+	
 	I18NCategory *g = GetI18NCategory("General");
 	I18NCategory *ms = GetI18NCategory("MainSettings");
 
 	ui_draw2d.SetFontScale(1.5f, 1.5f);
-	ui_draw2d.DrawText(UBUNTU24, ms->T("Settings"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, ms->T("Settings"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
 	ui_draw2d.SetFontScale(1.0f, 1.0f);
 
 	VLinear vlinear(30, 135, 20);
@@ -612,27 +635,27 @@ void SettingsScreen::render() {
 	if (UIButton(GEN_ID, vlinear, w, 0, ms->T("Audio"), ALIGN_BOTTOMLEFT)) {
 		screenManager()->push(new AudioScreen());
 	}
-	ui_draw2d.DrawText(UBUNTU24, ms->T("AudioDesc", "Adjust Audio Settings"), s, y, 0xFFFFFFFF, ALIGN_LEFT);
+	ui_draw2d.DrawTextShadow(UBUNTU24, ms->T("AudioDesc", "Adjust Audio Settings"), s, y, 0xFFFFFFFF, ALIGN_LEFT);
 
 	if (UIButton(GEN_ID, vlinear, w, 0, ms->T("Graphics"), ALIGN_BOTTOMLEFT)) {
 		screenManager()->push(new GraphicsScreenP1());
 	}
-	ui_draw2d.DrawText(UBUNTU24, ms->T("GraphicsDesc", "Change graphics options"), s, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+	ui_draw2d.DrawTextShadow(UBUNTU24, ms->T("GraphicsDesc", "Change graphics options"), s, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
 
 	if (UIButton(GEN_ID, vlinear, w, 0, ms->T("System"), ALIGN_BOTTOMLEFT)) {
 		screenManager()->push(new SystemScreen());
 	}
-	ui_draw2d.DrawText(UBUNTU24, ms->T("SystemDesc", "Turn on Dynarec (JIT), Fast Memory"), s, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+	ui_draw2d.DrawTextShadow(UBUNTU24, ms->T("SystemDesc", "Turn on Dynarec (JIT), Fast Memory"), s, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
 
 	if (UIButton(GEN_ID, vlinear, w, 0, ms->T("Controls"), ALIGN_BOTTOMLEFT)) {
 		screenManager()->push(new ControlsScreen());
 	}
-	ui_draw2d.DrawText(UBUNTU24, ms->T("ControlsDesc", "On Screen Controls, Large Buttons"), s, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+	ui_draw2d.DrawTextShadow(UBUNTU24, ms->T("ControlsDesc", "On Screen Controls, Large Buttons"), s, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
 
 	if (UIButton(GEN_ID, vlinear, w, 0, ms->T("Developer"), ALIGN_BOTTOMLEFT)) {
 		screenManager()->push(new DeveloperScreen());
 	}
-	ui_draw2d.DrawText(UBUNTU24, ms->T("DeveloperDesc", "Run CPU test, Dump Next Frame Log"), s, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+	ui_draw2d.DrawTextShadow(UBUNTU24, ms->T("DeveloperDesc", "Run CPU test, Dump Next Frame Log"), s, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
 	UIEnd();
 }
 
@@ -688,8 +711,26 @@ void ControlsScreen::update(InputState &input) {
 
 void KeyMappingNewKeyDialog::key(const KeyInput &key) {
 	if (key.flags & KEY_DOWN) {
-		last_kb_deviceid = key.deviceId;
-		last_kb_key = key.keyCode;
+		if (key.keyCode != KEYCODE_EXT_MOUSEBUTTON_1) {
+			last_kb_deviceid = key.deviceId;
+			last_kb_key = key.keyCode;
+			last_axis_id = -1;
+		}
+	}
+}
+
+void KeyMappingNewKeyDialog::axis(const AxisInput &axis) {
+	if (axis.value > AXIS_BIND_THRESHOLD) {
+		last_axis_deviceid = axis.deviceId;
+		last_axis_id = axis.axisId;
+		last_axis_direction = 1;
+		last_kb_key = 0;
+	}
+	if (axis.value < -AXIS_BIND_THRESHOLD) {
+		last_axis_deviceid = axis.deviceId;
+		last_axis_id = axis.axisId;
+		last_axis_direction = -1;
+		last_kb_key = 0;
 	}
 }
 
@@ -711,13 +752,25 @@ void DeveloperScreen::render() {
 	UIShader_Prepare();
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
+	
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
 
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	} 
+	
 	I18NCategory *g = GetI18NCategory("General");
 	I18NCategory *d = GetI18NCategory("Developer");
 	I18NCategory *s = GetI18NCategory("System");
 
 	ui_draw2d.SetFontScale(1.5f, 1.5f);
-	ui_draw2d.DrawText(UBUNTU24, d->T("Developer Tools"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, d->T("Developer Tools"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
 	ui_draw2d.SetFontScale(1.0f, 1.0f);
 
 	int x = 50;
@@ -732,6 +785,7 @@ void DeveloperScreen::render() {
 	if (UICheckBox(GEN_ID, x, y += stride, d->T("Report","Enable Compatibility Server Reports"), ALIGN_TOPLEFT, &reportingEnabled)) {
 		g_Config.sReportHost = reportingEnabled ? reportHostOfficial : "";
 	}
+	UICheckBox(GEN_ID, x, y += stride, d->T("New UI"), ALIGN_TOPLEFT, &g_Config.bNewUI);
 
 	VLinear vlinear(x, y + stride + 12, 16);
 
@@ -767,12 +821,24 @@ void AudioScreen::render() {
 	UIShader_Prepare();
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
+	
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
 
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	} 
+	
 	I18NCategory *g = GetI18NCategory("General");
 	I18NCategory *a = GetI18NCategory("Audio");
 
 	ui_draw2d.SetFontScale(1.5f, 1.5f);
-	ui_draw2d.DrawText(UBUNTU24, a->T("Audio Settings"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, a->T("Audio Settings"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
 	ui_draw2d.SetFontScale(1.0f, 1.0f);
 
 	if (UIButton(GEN_ID, Pos(dp_xres - 10, dp_yres-10), LARGE_BUTTON_WIDTH, 0, g->T("Back"), ALIGN_RIGHT | ALIGN_BOTTOM)) {
@@ -787,17 +853,18 @@ void AudioScreen::render() {
 	if (g_Config.bEnableSound) {
 		if (Atrac3plus_Decoder::IsInstalled()) {
 			UICheckBox(GEN_ID, x, y += stride, a->T("Enable Atrac3+"), ALIGN_TOPLEFT, &g_Config.bEnableAtrac3plus);
-		} else {
-			VLinear vlinear(30, 250, 20);
-			if (UIButton(GEN_ID, vlinear, 400, 0, a->T("Download Atrac3+ plugin"), ALIGN_LEFT)) {
-				screenManager()->push(new PluginScreen());
-			}
+		} 
+
+		// Show the download button even if not installed - might want to upgrade.
+		VLinear vlinear(30, 400, 20);
+		if (UIButton(GEN_ID, vlinear, 400, 0, a->T("Download Atrac3+ plugin"), ALIGN_LEFT)) {
+			screenManager()->push(new PluginScreen());
 		}
 
 		y+=10;
 		char bgmvol[256];
 		sprintf(bgmvol, "%s %i", a->T("BGM Volume :"), g_Config.iBGMVolume);
-		ui_draw2d.DrawText(UBUNTU24, bgmvol, x, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+		ui_draw2d.DrawTextShadow(UBUNTU24, bgmvol, x, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
 		HLinear hlinear1(x + 250, y, 20);
 		if (UIButton(GEN_ID, hlinear1, 80, 0, a->T("Auto"), ALIGN_LEFT))
 			g_Config.iBGMVolume = 3;
@@ -810,7 +877,7 @@ void AudioScreen::render() {
 		y+=20;
 		char sevol[256];
 		sprintf(sevol, "%s %i", a->T("SE Volume     :"), g_Config.iSEVolume);
-		ui_draw2d.DrawText(UBUNTU24, sevol, x, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+		ui_draw2d.DrawTextShadow(UBUNTU24, sevol, x, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
 		HLinear hlinear2(x + 250, y, 20);
 		if (UIButton(GEN_ID, hlinear2, 80, 0, a->T("Auto"), ALIGN_LEFT))
 			g_Config.iSEVolume = 3;
@@ -833,7 +900,19 @@ void GraphicsScreenP1::render() {
 	UIShader_Prepare();
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
+	
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
 
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	} 
+	
 	I18NCategory *g = GetI18NCategory("General");
 	I18NCategory *gs = GetI18NCategory("Graphics");
 	
@@ -841,7 +920,7 @@ void GraphicsScreenP1::render() {
 	sprintf(temp, "%s 1/3", gs->T("Graphics Settings"));
 
 	ui_draw2d.SetFontScale(1.5f, 1.5f);
-	ui_draw2d.DrawText(UBUNTU24, temp, dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, temp, dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
 	ui_draw2d.SetFontScale(1.0f, 1.0f);
 
 	if (UIButton(GEN_ID, Pos(dp_xres - 10, dp_yres - 10), LARGE_BUTTON_WIDTH, 0, g->T("Back"), ALIGN_BOTTOMRIGHT)) {
@@ -881,12 +960,10 @@ void GraphicsScreenP1::render() {
 			gpu->Resized();
 	}
 	if (g_Config.bBufferedRendering) {
-		bool memory = !g_Config.bFramebuffersToMem;
-		if (UICheckBox(GEN_ID, x + 60, y += stride, gs->T("Skip Updating PSP Memory"), ALIGN_TOPLEFT, &memory)) { 
+		if (UICheckBox(GEN_ID, x + 60, y += stride, gs->T("Read Framebuffers To Memory"), ALIGN_TOPLEFT, &g_Config.bFramebuffersToMem)) { 
 			if (gpu)
 				gpu->Resized();
 		}
-		g_Config.bFramebuffersToMem = memory ? 0 : 1; 
 		if (UICheckBox(GEN_ID, x + 60, y += stride, gs->T("AA", "Anti-Aliasing"), ALIGN_TOPLEFT, &g_Config.SSAntiAliasing)) {
 			if (gpu)
 				gpu->Resized();
@@ -900,7 +977,19 @@ void GraphicsScreenP2::render() {
 	UIShader_Prepare();
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
+	
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
 
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	} 
+	
 	I18NCategory *g = GetI18NCategory("General");
 	I18NCategory *gs = GetI18NCategory("Graphics");
 	
@@ -908,7 +997,7 @@ void GraphicsScreenP2::render() {
 	sprintf(temp, "%s 2/3", gs->T("Graphics Settings"));
 
 	ui_draw2d.SetFontScale(1.5f, 1.5f);
-	ui_draw2d.DrawText(UBUNTU24, temp, dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, temp, dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
 	ui_draw2d.SetFontScale(1.0f, 1.0f);
 
 	if (UIButton(GEN_ID, Pos(dp_xres - 10, dp_yres - 10), LARGE_BUTTON_WIDTH, 0, g->T("Back"), ALIGN_RIGHT | ALIGN_BOTTOM)) {
@@ -932,20 +1021,20 @@ void GraphicsScreenP2::render() {
 	UICheckBox(GEN_ID, x, y += stride, gs->T("Anisotropic Filtering"), ALIGN_TOPLEFT, &AnisotropicFiltering);
 	if (AnisotropicFiltering) {
 		if (g_Config.iAnisotropyLevel == 0)
-			g_Config.iAnisotropyLevel = 2;
+			g_Config.iAnisotropyLevel = 1;
 
 		char showAF[256];
-		sprintf(showAF, "%s %dx", gs->T("Level :"), g_Config.iAnisotropyLevel);
-		ui_draw2d.DrawText(UBUNTU24, showAF, x + 60, (y += stride) , 0xFFFFFFFF, ALIGN_LEFT);
-		HLinear hlinear1(x + 250, y , 20);
+		sprintf(showAF, "%s %dx", gs->T("Level :"), 1 << g_Config.iAnisotropyLevel);
+		ui_draw2d.DrawTextShadow(UBUNTU24, showAF, x + 60, (y += stride) , 0xFFFFFFFF, ALIGN_LEFT);
+		HLinear hlinear1(x + 300, y , 20);
 		if (UIButton(GEN_ID, hlinear1, 60, 0, gs->T("2x"), ALIGN_LEFT))
-			g_Config.iAnisotropyLevel = 2;
+			g_Config.iAnisotropyLevel = 1;
 		if (UIButton(GEN_ID, hlinear1, 60, 0, gs->T("4x"), ALIGN_LEFT))
-			g_Config.iAnisotropyLevel = 4;
+			g_Config.iAnisotropyLevel = 2;
 		if (UIButton(GEN_ID, hlinear1, 60, 0, gs->T("8x"), ALIGN_LEFT))
-			g_Config.iAnisotropyLevel = 8;
+			g_Config.iAnisotropyLevel = 3;
 		if (UIButton(GEN_ID, hlinear1, 60, 0, gs->T("16x"), ALIGN_LEFT))
-			g_Config.iAnisotropyLevel = 16;
+			g_Config.iAnisotropyLevel = 4;
 
 		y += 20;
 	} else 
@@ -960,12 +1049,12 @@ void GraphicsScreenP2::render() {
 		char showType[256];
 		std::string type;
 		switch (g_Config.iTexFiltering) {
-		case 2:	type = "Nearest";break;
-		case 3: type = "Linear";break;
-		case 4:	type = "Linear(CG)";break;
+		case 2:	type = "Nearest"; break;
+		case 3: type = "Linear"; break;
+		case 4:	type = "Linear(CG)"; break;
 		}
 		sprintf(showType, "%s %s", gs->T("Type :"), type.c_str());
-		ui_draw2d.DrawText(UBUNTU24, showType, x + 60, (y += stride) , 0xFFFFFFFF, ALIGN_LEFT);
+		ui_draw2d.DrawTextShadow(UBUNTU24, showType, x + 60, (y += stride) , 0xFFFFFFFF, ALIGN_LEFT);
 		HLinear hlinear1(x + 300, y, 20);
 		if (UIButton(GEN_ID, hlinear1, 170, 0, gs->T("Nearest"), ALIGN_LEFT)) 
 			g_Config.iTexFiltering = 2;
@@ -993,8 +1082,8 @@ void GraphicsScreenP2::render() {
 		case 3: type = "H+B";break;
 		}
 		sprintf(showType, "%s %s", gs->T("Type :"), type.c_str());
-		ui_draw2d.DrawText(UBUNTU24, showType, x + 60, (y += stride) , 0xFFFFFFFF, ALIGN_LEFT);
-		HLinear hlinear1(x + 250, y, 20);
+		ui_draw2d.DrawTextShadow(UBUNTU24, showType, x + 60, (y += stride) , 0xFFFFFFFF, ALIGN_LEFT);
+		HLinear hlinear1(x + 300, y, 20);
 		if (UIButton(GEN_ID, hlinear1, 80, 0, gs->T("xBRZ"), ALIGN_LEFT))
 			g_Config.iTexScalingType = 0;
 		if (UIButton(GEN_ID, hlinear1, 120, 0, gs->T("Hybrid", "(H)ybrid"), ALIGN_LEFT))
@@ -1006,16 +1095,16 @@ void GraphicsScreenP2::render() {
 		y += 20;
 		char showLevel[256];
 		sprintf(showLevel, "%s %dx", gs->T("Level :"), g_Config.iTexScalingLevel);
-		ui_draw2d.DrawText(UBUNTU24, showLevel, x + 60, (y += stride) , 0xFFFFFFFF, ALIGN_LEFT);
-		HLinear hlinear2(x + 250, y, 20);
-		if (UIButton(GEN_ID, hlinear2, 45, 0, gs->T("2x"), ALIGN_LEFT))
+		ui_draw2d.DrawTextShadow(UBUNTU24, showLevel, x + 60, (y += stride) , 0xFFFFFFFF, ALIGN_LEFT);
+		HLinear hlinear2(x + 300, y, 20);
+		if (UIButton(GEN_ID, hlinear2, 50, 0, gs->T("2x"), ALIGN_LEFT))
 			g_Config.iTexScalingLevel = 2;
-		if (UIButton(GEN_ID, hlinear2, 45, 0, gs->T("3x"), ALIGN_LEFT))
+		if (UIButton(GEN_ID, hlinear2, 50, 0, gs->T("3x"), ALIGN_LEFT))
 			g_Config.iTexScalingLevel = 3;
 #ifdef _WIN32
-		if (UIButton(GEN_ID, hlinear2, 45, 0, gs->T("4x"), ALIGN_LEFT))
+		if (UIButton(GEN_ID, hlinear2, 50, 0, gs->T("4x"), ALIGN_LEFT))
 			g_Config.iTexScalingLevel = 4;
-		if (UIButton(GEN_ID, hlinear2, 45, 0, gs->T("5x"), ALIGN_LEFT))
+		if (UIButton(GEN_ID, hlinear2, 50, 0, gs->T("5x"), ALIGN_LEFT))
 			g_Config.iTexScalingLevel = 5;
 #endif
 		UICheckBox(GEN_ID, x + 60, y += stride + 20, gs->T("Deposterize"), ALIGN_LEFT, &g_Config.bTexDeposterize);
@@ -1029,7 +1118,19 @@ void GraphicsScreenP3::render() {
 	UIShader_Prepare();
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
+	
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
 
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	} 
+	
 	I18NCategory *g = GetI18NCategory("General");
 	I18NCategory *gs = GetI18NCategory("Graphics");
 	
@@ -1037,7 +1138,7 @@ void GraphicsScreenP3::render() {
 	sprintf(temp, "%s 3/3", gs->T("Graphics Settings"));
 
 	ui_draw2d.SetFontScale(1.5f, 1.5f);
-	ui_draw2d.DrawText(UBUNTU24, temp, dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, temp, dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
 	ui_draw2d.SetFontScale(1.0f, 1.0f);
 
 	if (UIButton(GEN_ID, Pos(dp_xres - 10, dp_yres - 10), LARGE_BUTTON_WIDTH, 0, g->T("Back"), ALIGN_RIGHT | ALIGN_BOTTOM)) {
@@ -1079,10 +1180,11 @@ void GraphicsScreenP3::render() {
 		case 1: type = gs->T("Display: Speed"); break;
 		case 2:	type = gs->T("Display: FPS"); break;
 		case 3: type = gs->T("Display: Both"); break;
+		default: type = ""; break;
 		}
 
-		ui_draw2d.DrawText(UBUNTU24, type, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
-		HLinear hlinear1(x + 260, y, 20);
+		ui_draw2d.DrawTextShadow(UBUNTU24, type, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
+		HLinear hlinear1(x + 300, y, 20);
 		if (UIButton(GEN_ID, hlinear1, 100, 0, gs->T("Speed"), ALIGN_LEFT))
 			g_Config.iShowFPSCounter = 1;
 		if (UIButton(GEN_ID, hlinear1, 100, 0, gs->T("FPS"), ALIGN_LEFT))
@@ -1101,17 +1203,21 @@ void GraphicsScreenP3::render() {
 			g_Config.iFpsLimit = 60;
 		
 		char showFps[256];
-		sprintf(showFps, "%s %d", gs->T("Speed :"), g_Config.iFpsLimit);
-		ui_draw2d.DrawText(UBUNTU24, showFps, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
-		HLinear hlinear1(x + 260, y, 20);
+		sprintf(showFps, "%s %d", gs->T("Speed:"), g_Config.iFpsLimit);
+		ui_draw2d.DrawTextShadow(UBUNTU24, showFps, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
+		HLinear hlinear1(x + 300, y, 20);
 		if (UIButton(GEN_ID, hlinear1, 100, 0, gs->T("Auto"), ALIGN_LEFT))
 			g_Config.iFpsLimit = 60;
 		if (UIButton(GEN_ID, hlinear1, 50, 0, gs->T("-1"), ALIGN_LEFT))
 			if(g_Config.iFpsLimit > 10)
 				g_Config.iFpsLimit -= 1;
 		if (UIButton(GEN_ID, hlinear1, 50, 0, gs->T("+1"), ALIGN_LEFT))
-			if(g_Config.iFrameSkip < 240)
 				g_Config.iFpsLimit += 1;
+		if (UIButton(GEN_ID, hlinear1, 65, 0, gs->T("-10"), ALIGN_LEFT))
+			if(g_Config.iFpsLimit > 10)
+				g_Config.iFpsLimit -= 10;
+		if (UIButton(GEN_ID, hlinear1, 65, 0, gs->T("+10"), ALIGN_LEFT))
+				g_Config.iFpsLimit += 10;
 
 		y += 20;
 	} else 
@@ -1124,15 +1230,15 @@ void GraphicsScreenP3::render() {
 			g_Config.iFrameSkip = 3;
 
 		char showFrameSkip[256];
-		sprintf(showFrameSkip, "%s %d", gs->T("Frames :"), g_Config.iFrameSkip);
-		ui_draw2d.DrawText(UBUNTU24, showFrameSkip, x + 60, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
-		HLinear hlinear2(x + 250, y, 20);
-		if (UIButton(GEN_ID, hlinear2, 80, 0, gs->T("Auto"), ALIGN_LEFT))
+		sprintf(showFrameSkip, "%s %d", gs->T("Frames:"), g_Config.iFrameSkip);
+		ui_draw2d.DrawTextShadow(UBUNTU24, showFrameSkip, x + 60, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+		HLinear hlinear2(x + 300, y, 20);
+		if (UIButton(GEN_ID, hlinear2, 100, 0, gs->T("Auto"), ALIGN_LEFT))
 			g_Config.iFrameSkip = 3;
-		if (UIButton(GEN_ID, hlinear2, 40, 0, gs->T("-1"), ALIGN_LEFT))
+		if (UIButton(GEN_ID, hlinear2, 50, 0, gs->T("-1"), ALIGN_LEFT))
 			if (g_Config.iFrameSkip > 1)
 				g_Config.iFrameSkip -= 1;
-		if (UIButton(GEN_ID, hlinear2, 40, 0, gs->T("+1"), ALIGN_LEFT))
+		if (UIButton(GEN_ID, hlinear2, 50, 0, gs->T("+1"), ALIGN_LEFT))
 			if (g_Config.iFrameSkip < 9)
 				g_Config.iFrameSkip += 1;
 
@@ -1156,16 +1262,27 @@ void LanguageScreen::render() {
 	UIShader_Prepare();
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
+	
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
 
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	} 
+	
 	I18NCategory *s = GetI18NCategory("System");
 	I18NCategory *g = GetI18NCategory("General");
-	I18NCategory *l = GetI18NCategory("Language");
 
 	bool small = dp_xres < 790;
 
 	if (!small) {
 		ui_draw2d.SetFontScale(1.5f, 1.5f);
-		ui_draw2d.DrawText(UBUNTU24, s->T("Language"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
+		ui_draw2d.DrawTextShadow(UBUNTU24, s->T("Language"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
 		ui_draw2d.SetFontScale(1.0f, 1.0f);
 	}
 
@@ -1251,7 +1368,6 @@ void LanguageScreen::render() {
 				// After this, g and s are no longer valid. Let's return, some flicker is okay.
 				g = GetI18NCategory("General");
 				s = GetI18NCategory("System");
-				l = GetI18NCategory("Language");
 			} else {
 				g_Config.languageIni = oldLang;
 			}
@@ -1264,12 +1380,24 @@ void SystemScreen::render() {
 	UIShader_Prepare();
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
+	
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
 
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	} 
+	
 	I18NCategory *s = GetI18NCategory("System");
 	I18NCategory *g = GetI18NCategory("General");
 
 	ui_draw2d.SetFontScale(1.5f, 1.5f);
-	ui_draw2d.DrawText(UBUNTU24, s->T("System Settings"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, s->T("System Settings"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
 	ui_draw2d.SetFontScale(1.0f, 1.0f);
 
 	if (UIButton(GEN_ID, Pos(dp_xres - 10, dp_yres - 10), LARGE_BUTTON_WIDTH, 0, g->T("Back"), ALIGN_RIGHT | ALIGN_BOTTOM)) {
@@ -1302,7 +1430,7 @@ void SystemScreen::render() {
 			g_Config.iLockedCPUSpeed = 222;
 		char showCPUSpeed[256];
 		sprintf(showCPUSpeed, "%s %d", s->T("Frequency :"), g_Config.iLockedCPUSpeed);
-		ui_draw2d.DrawText(UBUNTU24, showCPUSpeed, x + 60, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+		ui_draw2d.DrawTextShadow(UBUNTU24, showCPUSpeed, x + 60, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
 		HLinear hlinear1(x + 300, y, 20);
 		if (UIButton(GEN_ID, hlinear1, 80, 0, s->T("Auto"), ALIGN_LEFT))
 			g_Config.iLockedCPUSpeed = 222;
@@ -1348,11 +1476,15 @@ void SystemScreen::render() {
 				case 10: type = "繁體中文";break;
 				case 11: type = "简体中文";break;
 	}
+
 	sprintf(lang, "%s %s", s->T("System Language :"), type.c_str());
-	ui_draw2d.DrawText(UBUNTU24, lang, x, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
-	HLinear hlinear3(x + 400, y, 20);
-	if (UIButton(GEN_ID, hlinear3, 220, 0, s->T("Language"), ALIGN_TOPLEFT)) {
-		screenManager()->push(new LanguageScreen());
+	ui_draw2d.DrawTextShadow(UBUNTU24, lang, x, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+	HLinear hlinear2(x + 400, y, 20);
+	if (UIButton(GEN_ID, hlinear2, 220, 0, s->T("Language"), ALIGN_TOPLEFT)) {
+		if (g_Config.bNewUI)
+			screenManager()->push(new NewLanguageScreen());
+		else
+			screenManager()->push(new LanguageScreen());
 	} 
 	y+=20;
 
@@ -1367,12 +1499,7 @@ void SystemScreen::render() {
 		break;
 	}
 
-#ifdef _WIN32
-	const int checkboxH = 32;
-#else
-	const int checkboxH = 48;
-#endif
-	ui_draw2d.DrawTextShadow(UBUNTU24, buttonPreferenceTitle, x, (y += stride) + checkboxH / 2, 0xFFFFFFFF, ALIGN_LEFT | ALIGN_VCENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, buttonPreferenceTitle, x, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
 	// 29 is the width of the checkbox, new UI will replace.
 	HLinear hlinearButtonPref(x + 400, y, 10);
 	if (UIButton(GEN_ID, hlinearButtonPref, 105, 0, s->T("Use O"), ALIGN_LEFT))
@@ -1383,15 +1510,15 @@ void SystemScreen::render() {
 
 	char recents[256];
 	sprintf(recents, "%s %i", s->T("Max. No of Recents :"), g_Config.iMaxRecent);
-	ui_draw2d.DrawText(UBUNTU24, recents, x, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
-	HLinear hlinear2(x + 400, y, 10);
-	if (UIButton(GEN_ID, hlinear2, 50, 0, s->T("-1"), ALIGN_LEFT))
+	ui_draw2d.DrawTextShadow(UBUNTU24, recents, x, y += stride, 0xFFFFFFFF, ALIGN_LEFT);
+	HLinear hlinear4(x + 400, y, 10);
+	if (UIButton(GEN_ID, hlinear4, 50, 0, s->T("-1"), ALIGN_LEFT))
 		if (g_Config.iMaxRecent > 4)
 			g_Config.iMaxRecent -= 1;
-	if (UIButton(GEN_ID, hlinear2, 50, 0, s->T("+1"), ALIGN_LEFT))
+	if (UIButton(GEN_ID, hlinear4, 50, 0, s->T("+1"), ALIGN_LEFT))
 		if (g_Config.iMaxRecent < 40)
 			g_Config.iMaxRecent += 1;
-	if (UIButton(GEN_ID, hlinear2, 100, 0, s->T("Clear"), ALIGN_LEFT)) {
+	if (UIButton(GEN_ID, hlinear4, 100, 0, s->T("Clear"), ALIGN_LEFT)) {
 		g_Config.recentIsos.clear();
 	}
 	y += 20;
@@ -1410,7 +1537,7 @@ void SystemScreen::render() {
 				case 2: type = "24HR";break;
 			}
 			sprintf(button, "%s %s", s->T("Format :"), type.c_str());
-			ui_draw2d.DrawText(UBUNTU24, button, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
+			ui_draw2d.DrawTextShadow(UBUNTU24, button, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
 			HLinear hlinear1(x + 280, y, 20);
 			if (UIButton(GEN_ID, hlinear1, 80, 0, s->T("12HR"), ALIGN_LEFT))
 					g_Config.iTimeFormat = 1;
@@ -1433,7 +1560,7 @@ void SystemScreen::render() {
 				case 3:	type = "DDMMYYYY";break;
 			}
 			sprintf(button, "%s %s", s->T("Format :"), type.c_str());
-			ui_draw2d.DrawText(UBUNTU24, button, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
+			ui_draw2d.DrawTextShadow(UBUNTU24, button, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
 			HLinear hlinear1(x + 350, y, 10);
 			if (UIButton(GEN_ID, hlinear1, 70, 0, s->T("YMD"), ALIGN_LEFT))
 					g_Config.iDateFormat = 1;
@@ -1454,12 +1581,24 @@ void ControlsScreen::render() {
 	UIShader_Prepare();
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
+	
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
 
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	} 
+	
 	I18NCategory *c = GetI18NCategory("Controls");
 	I18NCategory *g = GetI18NCategory("General");
 
 	ui_draw2d.SetFontScale(1.5f, 1.5f);
-	ui_draw2d.DrawText(UBUNTU24, c->T("Controls Settings"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
+	ui_draw2d.DrawTextShadow(UBUNTU24, c->T("Controls Settings"), dp_xres / 2, 10, 0xFFFFFFFF, ALIGN_HCENTER);
 	ui_draw2d.SetFontScale(1.0f, 1.0f);
 
 	if (UIButton(GEN_ID, Pos(dp_xres - 10, dp_yres - 10), LARGE_BUTTON_WIDTH, 0, g->T("Back"), ALIGN_RIGHT | ALIGN_BOTTOM)) {
@@ -1475,40 +1614,12 @@ void ControlsScreen::render() {
 	UICheckBox(GEN_ID, x, y += stride, c->T("Tilt", "Tilt to Analog (horizontal)"), ALIGN_TOPLEFT, &g_Config.bAccelerometerToAnalogHoriz);
 	if (g_Config.bShowTouchControls) {
 		UICheckBox(GEN_ID, x, y += stride, c->T("Show Left Analog Stick"), ALIGN_TOPLEFT, &g_Config.bShowAnalogStick);
-		bool rightstick = g_Config.iRightStickBind > 0;
-		UICheckBox(GEN_ID, x, y += stride, c->T("Bind Right Analog Stick"), ALIGN_TOPLEFT, &rightstick);
-		if (rightstick) {
-			if (g_Config.iRightStickBind <= 0 )
-				g_Config.iRightStickBind = 1;
-
-			char showType[256];
-			std::string type;
-			switch (g_Config.iRightStickBind) {
-			case 1:	type = "Arrow Buttons";break;
-			case 2: type = "Face Buttons";break;
-			case 3:	type = "L/R";break;
-			case 4:	type = "L/R + Triangle/Cross";break;
-			}
-			sprintf(showType, "%s %s", c->T("Target :"), type.c_str());
-			ui_draw2d.DrawText(UBUNTU24, showType, x + 60, (y += stride) , 0xFFFFFFFF, ALIGN_LEFT);
-			HLinear hlinear1(x + 60 , y+= stride + 5, 10);
-			if (UIButton(GEN_ID, hlinear1, 200, 0, c->T("Arrow Buttons"), ALIGN_LEFT)) 
-				g_Config.iRightStickBind = 1;
-			if (UIButton(GEN_ID, hlinear1, 200, 0, c->T("Face Buttons"), ALIGN_LEFT))
-				g_Config.iRightStickBind = 2;
-			if (UIButton(GEN_ID, hlinear1, 60, 0, c->T("L/R"), ALIGN_LEFT))
-				g_Config.iRightStickBind = 3;
-			if (UIButton(GEN_ID, hlinear1, 280, 0, c->T("L/R + Triangle/Cross"), ALIGN_LEFT))
-				g_Config.iRightStickBind = 4;
-			y += 20;
-		} else
-			g_Config.iRightStickBind = 0;
 			
 		UICheckBox(GEN_ID, x, y += stride, c->T("Buttons Scaling"), ALIGN_TOPLEFT, &g_Config.bLargeControls);
 		if (g_Config.bLargeControls) {
 			char scale[256];
 			sprintf(scale, "%s %0.2f", c->T("Scale :"), g_Config.fButtonScale);
-			ui_draw2d.DrawText(UBUNTU24, scale, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
+			ui_draw2d.DrawTextShadow(UBUNTU24, scale, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
 			HLinear hlinear1(x + 250, y, 20);
 			if (UIButton(GEN_ID, hlinear1, 80, 0, c->T("Auto"), ALIGN_LEFT))
 				g_Config.fButtonScale = 1.15;
@@ -1527,7 +1638,7 @@ void ControlsScreen::render() {
 		if (bTransparent) {
 			char opacity[256];
 			sprintf(opacity, "%s %d", c->T("Opacity :"), g_Config.iTouchButtonOpacity);
-			ui_draw2d.DrawText(UBUNTU24, opacity, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
+			ui_draw2d.DrawTextShadow(UBUNTU24, opacity, x + 60, y += stride , 0xFFFFFFFF, ALIGN_LEFT);
 			HLinear hlinear1(x + 250, y, 20);
 			if (UIButton(GEN_ID, hlinear1, 80, 0, c->T("Auto"), ALIGN_LEFT))
 				g_Config.iTouchButtonOpacity = 15;
@@ -1548,6 +1659,9 @@ void ControlsScreen::render() {
 	if (UIButton(GEN_ID, hlinear, 250, 0, c->T("Key Mapping"), ALIGN_LEFT)) {
 		screenManager()->push(new KeyMappingScreen());
 	}
+	if (UIButton(GEN_ID, hlinear, 250, 0, c->T("Default Mapping"), ALIGN_LEFT)) {
+		KeyMap::RestoreDefault();
+	}
 
 	UIEnd();
 }
@@ -1563,7 +1677,19 @@ void KeyMappingScreen::render() {
 	UIShader_Prepare();
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
+	
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
 
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	} 
+	
 	I18NCategory *keyI18N = GetI18NCategory("KeyMapping");
 	I18NCategory *generalI18N = GetI18NCategory("General");
 
@@ -1576,6 +1702,7 @@ void KeyMappingScreen::render() {
 	} \
 	UIText(0, Pos(x+30, y+50), KeyMap::NameDeviceFromPspButton(currentMap_, symbol).c_str(), 0xFFFFFFFF, 0.78f, ALIGN_HCENTER); \
 	UIText(0, Pos(x+30, y+80), KeyMap::GetPspButtonName(symbol).c_str(), 0xFFFFFFFF, 0.5f, ALIGN_HCENTER); \
+
 
 	// \
 	// UIText(0, Pos(x, y+50), controllerMaps[currentMap_].name.c_str(), 0xFFFFFFFF, 0.5f, ALIGN_HCENTER);
@@ -1592,7 +1719,6 @@ void KeyMappingScreen::render() {
 	KeyBtn(left+pad, top+hlfpad, CTRL_RIGHT); // >
 	KeyBtn(left+hlfpad, top+pad, CTRL_DOWN); // v
 
-#ifndef ANDROID
 	top = 10;
 	left = 250;
 	KeyBtn(left+hlfpad, top, VIRTKEY_AXIS_Y_MAX); // ^
@@ -1600,7 +1726,6 @@ void KeyMappingScreen::render() {
 	KeyBtn(left+pad, top+hlfpad, VIRTKEY_AXIS_X_MAX); // >
 	KeyBtn(left+hlfpad, top+pad, VIRTKEY_AXIS_Y_MIN); // v
 	top = 100;
-#endif
 
 	left = 500;
 	KeyBtn(left+hlfpad, top, CTRL_TRIANGLE); // Triangle
@@ -1613,7 +1738,19 @@ void KeyMappingScreen::render() {
 	left = 250;
 	KeyBtn(left, top, CTRL_SELECT);
 	KeyBtn(left + pad, top, CTRL_START);
+
+	top = 10;
+	left = 720;
+	KeyBtn(left, top, VIRTKEY_UNTHROTTLE);
+	top += 100;
+	KeyBtn(left, top, VIRTKEY_SPEED_TOGGLE);
+	top += 100;
+	KeyBtn(left, top, VIRTKEY_PAUSE);
+	top += 100;
+	KeyBtn(left, top, VIRTKEY_RAPID_FIRE);
 #undef KeyBtn
+
+	// TODO: Add rapid fire somewhere?
 
 	if (UIButton(GEN_ID, Pos(dp_xres - 10, dp_yres - 10), LARGE_BUTTON_WIDTH, 0, generalI18N->T("Back"), ALIGN_RIGHT | ALIGN_BOTTOM)) {
 		screenManager()->finishDialog(this, DR_OK);
@@ -1630,7 +1767,7 @@ void KeyMappingScreen::render() {
 			currentMap_ = 0;
 	}
 	char temp[256];
-	sprintf(temp, "%s (%i/%i)", controllerMaps[currentMap_].name.c_str(), currentMap_ + 1, controllerMaps.size());
+	sprintf(temp, "%s (%i/%i)", controllerMaps[currentMap_].name.c_str(), currentMap_ + 1, (int)controllerMaps.size());
 	UIText(0, Pos(10, dp_yres-170), temp, 0xFFFFFFFF, 1.0f, ALIGN_BOTTOMLEFT);
 	UICheckBox(GEN_ID,10, dp_yres - 80, "Mapping Active", ALIGN_BOTTOMLEFT, &controllerMaps[currentMap_].active);
 	UIEnd();
@@ -1641,11 +1778,23 @@ void KeyMappingNewKeyDialog::render() {
 	UIBegin(UIShader_Get());
 	DrawBackground(1.0f);
 
+	UIContext *ctx = screenManager()->getUIContext();
+	UIFlush();
+	GameInfo *ginfo = g_gameInfoCache.GetInfo(PSP_CoreParameter().fileToStart, true);
+
+	if (ginfo && ginfo->pic1Texture) {
+		ginfo->pic1Texture->Bind(0);
+		uint32_t color = whiteAlpha(ease((time_now_d() - ginfo->timePic1WasLoaded) * 3)) & 0xFFc0c0c0;
+		ui_draw2d.DrawTexRect(0,0,dp_xres, dp_yres, 0,0,1,1,color);
+		ui_draw2d.Flush();
+		ctx->RebindTexture();
+	}
+
 	I18NCategory *keyI18N = GetI18NCategory("KeyMapping");
 	I18NCategory *generalI18N = GetI18NCategory("General");
 
 #define KeyText(x, y, sentence) \
-	ui_draw2d.DrawText(UBUNTU24, (sentence), x, y, 0xFFFFFFFF, ALIGN_TOPLEFT);
+	ui_draw2d.DrawTextShadow(UBUNTU24, (sentence), x, y, 0xFFFFFFFF, ALIGN_TOPLEFT);
 #define KeyScale(width) \
 	ui_draw2d.SetFontScale(width, width);
 
@@ -1666,16 +1815,29 @@ void KeyMappingNewKeyDialog::render() {
 	KeyScale(1.4f);
 	KeyText(right, top, keyI18N->T("New Key"));
 	KeyScale(2.0f);
-	if (last_kb_key != 0) {
+	if (last_axis_id != -1) {
+		const std::string axis_direction_name = KeyMap::GetAxisName(last_axis_id) + (last_axis_direction < 0 ? "-" : "+");
+		KeyText(right, top += stride, axis_direction_name.c_str());
+		KeyScale(1.4f);
+		KeyText(right, top + stride, GetDeviceName(last_axis_deviceid));
+		bool key_used = KeyMap::IsMappedAxis(last_axis_deviceid, last_axis_id, last_axis_direction);
+		if (key_used) {
+			KeyScale(1.0f);
+			KeyText(left + stride, top + 2*stride,
+			keyI18N->T("Warning: Key is already used by"));
+			KeyText(left + stride, top + 3*stride,
+			        (KeyMap::NamePspButtonFromAxis(last_axis_deviceid, last_axis_id, last_axis_direction)).c_str());
+		}
+	} else if (last_kb_key != 0) {
 		KeyText(right, top += stride, KeyMap::GetKeyName(last_kb_key).c_str());
 		KeyScale(1.4f);
 		KeyText(right, top + stride, GetDeviceName(last_kb_deviceid));
 		bool key_used = KeyMap::IsMappedKey(last_kb_deviceid, last_kb_key);
 		if (key_used) {
 			KeyScale(1.0f);
-			KeyText(left + stride, top + 2*stride, 
-		  keyI18N->T("Warning: Key is already used by"));
-			KeyText(left + stride, top + 3*stride, 
+			KeyText(left + stride, top + 2*stride,
+			keyI18N->T("Warning: Key is already used by"));
+			KeyText(left + stride, top + 3*stride,
 			        (KeyMap::NamePspButtonFromKey(last_kb_deviceid, last_kb_key)).c_str());
 		}
 	}
@@ -1686,7 +1848,10 @@ void KeyMappingNewKeyDialog::render() {
 
 	// Save & cancel buttons
 	if (UIButton(GEN_ID, Pos(10, dp_yres - 10), LARGE_BUTTON_WIDTH, 0, keyI18N->T("Save Mapping"), ALIGN_LEFT | ALIGN_BOTTOM)) {
-		KeyMap::SetKeyMapping(currentMap_, last_kb_deviceid, last_kb_key, pspBtn);
+		if (last_axis_id != -1)
+			KeyMap::SetAxisMapping(currentMap_, last_axis_deviceid, last_axis_id, last_axis_direction, pspBtn);
+		else
+			KeyMap::SetKeyMapping(currentMap_, last_kb_deviceid, last_kb_key, pspBtn);
 		g_Config.Save();
 		screenManager()->finishDialog(this, DR_OK);
 	}
@@ -1762,6 +1927,19 @@ FileSelectScreen::FileSelectScreen(const FileSelectScreenOptions &options) : opt
 	updateListing();
 }
 
+void FileSelectScreen::key(const KeyInput &key) {
+	if (key.flags & KEY_DOWN) {
+		switch (key.keyCode) {
+		case KEYCODE_EXT_MOUSEWHEEL_UP:
+			list_.scrollRelative(-50);
+			break;
+		case KEYCODE_EXT_MOUSEWHEEL_DOWN:
+			list_.scrollRelative(50);
+			break;
+		}
+	}
+}
+
 void FileSelectScreen::updateListing() {
 	listing_.clear();
 	getFilesInDir(currentDirectory_.c_str(), &listing_, options_.filter);
@@ -1824,14 +2002,13 @@ void FileSelectScreen::render() {
 void CreditsScreen::update(InputState &input_state) {
 	globalUIState = UISTATE_MENU;
 	if (input_state.pad_buttons_down & PAD_BUTTON_BACK) {
-		screenManager()->switchScreen(new MenuScreen());
+		screenManager()->finishDialog(this, DR_OK);
 	}
 	frames_++;
 }
 
 
 void CreditsScreen::render() {
-	
 	I18NCategory *c = GetI18NCategory("PSPCredits");
 
 	const char * credits[] = {
@@ -1944,40 +2121,17 @@ void CreditsScreen::render() {
 
 #ifdef ANDROID
 #ifndef GOLD
-	if (UIButton(GEN_ID, Pos(10, dp_yres - 10), 200, 0, g->T("Buy PPSSPP Gold"), ALIGN_BOTTOMLEFT)) {
-		sendMessage("launchBrowser", "market://details?id=org.ppsspp.ppssppgold");
+	if (UIButton(GEN_ID, Pos(10, dp_yres - 10), 300, 0, g->T("Buy PPSSPP Gold"), ALIGN_BOTTOMLEFT)) {
+		LaunchBrowser("market://details?id=org.ppsspp.ppssppgold");
+	}
+#endif
+#else
+#ifndef GOLD
+	if (UIButton(GEN_ID, Pos(10, dp_yres - 10), 300, 0, g->T("Buy PPSSPP Gold"), ALIGN_BOTTOMLEFT)) {
+		LaunchBrowser("http://central.ppsspp.org/buygold");
 	}
 #endif
 #endif
-
-	UIEnd();
-}
-
-void ErrorScreen::update(InputState &input_state) {
-	if (input_state.pad_buttons_down & PAD_BUTTON_BACK) {
-		screenManager()->finishDialog(this, DR_OK);
-	}
-}
-
-void ErrorScreen::render()
-{
-	UIShader_Prepare();
-	UIBegin(UIShader_Get());
-	DrawBackground(1.0f);
-
-	I18NCategory *ge = GetI18NCategory("Error");
-
-	ui_draw2d.SetFontScale(1.5f, 1.5f);
-	ui_draw2d.DrawText(UBUNTU24, ge->T(errorTitle_.c_str()), dp_xres / 2, 30, 0xFFFFFFFF, ALIGN_HCENTER);
-	ui_draw2d.SetFontScale(1.0f, 1.0f);
-
-	ui_draw2d.DrawText(UBUNTU24, ge->T(errorMessage_.c_str()), 40, 120, 0xFFFFFFFF, ALIGN_LEFT);
-
-	I18NCategory *g = GetI18NCategory("General");
-
-	if (UIButton(GEN_ID, Pos(dp_xres - 10, dp_yres - 10), 200, 0, g->T("Back"), ALIGN_BOTTOMRIGHT)) {
-		screenManager()->finishDialog(this, DR_OK);
-	}
 
 	UIEnd();
 }

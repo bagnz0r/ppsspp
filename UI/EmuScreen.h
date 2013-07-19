@@ -40,15 +40,18 @@ public:
 	virtual void axis(const AxisInput &axis);
 
 private:
+	void bootGame(const std::string &filename);
+
+	void pspKey(int pspKeyCode, int flags);
+	void onVKeyDown(int virtualKeyCode);
+	void onVKeyUp(int virtualKeyCode);
+
 	// Something invalid was loaded, don't try to emulate
 	bool invalid_;
 	std::string errorMessage_;
 
 	// For the virtual touch buttons, that currently can't send key events.
 	InputState fakeInputState;
-
-	// Analog is still buffered.
-	struct {float x, y;} analog_[2];
 
 	// To track mappable virtual keys. We can have as many as we want.
 	bool virtKeys[VIRTKEY_COUNT];

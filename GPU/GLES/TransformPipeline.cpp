@@ -521,6 +521,11 @@ void TransformDrawEngine::SoftwareTransformAndDraw(
 		vscale /= gstate_c.curTextureHeight;
 	}
 
+	int w = 1 << (gstate.texsize[0] & 0xf);
+	int h = 1 << ((gstate.texsize[0] >> 8) & 0xf);
+	float widthFactor = (float) w / (float) gstate_c.curTextureWidth;
+	float heightFactor = (float) h / (float) gstate_c.curTextureHeight;
+
 	Lighter lighter;
 	float fog_end = getFloat24(gstate.fog1);
 	float fog_slope = getFloat24(gstate.fog2);
@@ -676,10 +681,20 @@ void TransformDrawEngine::SoftwareTransformAndDraw(
 						source = Vec3(ruv[0], ruv[1], 0.0f);
 						break;
 					case 2: // Use normalized normal as source
-						source = Vec3(norm).Normalized();
+						if (reader.hasNormal()) {
+							source = Vec3(norm).Normalized();
+						} else {
+							ERROR_LOG_REPORT(G3D, "Normal projection mapping without normal?");
+							source = Vec3(0.0f);
+						}
 						break;
 					case 3: // Use non-normalized normal as source!
-						source = Vec3(norm);
+						if (reader.hasNormal()) {
+							source = Vec3(norm);
+						} else {
+							ERROR_LOG_REPORT(G3D, "Normal projection mapping without normal?");
+							source = Vec3(0.0f);
+						}
 						break;
 					}
 
@@ -705,6 +720,8 @@ void TransformDrawEngine::SoftwareTransformAndDraw(
 				// Illegal
 				break;
 			}
+			uv[0] = uv[0] * widthFactor;
+			uv[1] = uv[1] * heightFactor;
 
 			// Transform the coord by the view matrix.
 			Vec3ByMatrix43(v, out, gstate.viewMatrix);
@@ -715,10 +732,9 @@ void TransformDrawEngine::SoftwareTransformAndDraw(
 		memcpy(&transformed[index].x, v, 3 * sizeof(float));
 		transformed[index].fog = fogCoef;
 		memcpy(&transformed[index].u, uv, 3 * sizeof(float));
-
-		if (gstate_c.flipTexture) 
+		if (gstate_c.flipTexture) {
 			transformed[index].v = 1.0f - transformed[index].v;
-
+		}
 		for (int i = 0; i < 4; i++) {
 			transformed[index].color0[i] = c0[i] * 255.0f;
 		}

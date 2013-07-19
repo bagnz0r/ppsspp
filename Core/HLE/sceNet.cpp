@@ -21,22 +21,26 @@
 
 #include "sceKernel.h"
 #include "sceKernelThread.h"
+#include "sceKernelMutex.h"
 #include "sceUtility.h"
+
+#include "net/resolve.h"
 
 static bool netInited;
 static bool netInetInited;
 static bool netAdhocInited;
+static bool netAdhocctlInited;
+static bool netAdhocMatchingInited;
 static bool netApctlInited;
 
-static u32 adhocctlHandlerCount;
-static u32 apctlHandlerCount;
-
 // TODO: Determine how many handlers we can actually have
-const u32 MAX_ADHOCCTL_HANDLERS = 32;
-const u32 MAX_APCTL_HANDLERS = 32;
+const size_t MAX_ADHOCCTL_HANDLERS = 32;
+const size_t MAX_APCTL_HANDLERS = 32;
 
 enum {
 	ERROR_NET_BUFFER_TOO_SMALL                   = 0x80400706,
+
+	ERROR_NET_INET_ALREADY_INITIALIZED           = 0x80410201,
 
 	ERROR_NET_RESOLVER_BAD_ID                    = 0x80410408,
 	ERROR_NET_RESOLVER_ALREADY_STOPPED           = 0x8041040a,
@@ -56,10 +60,12 @@ enum {
 	ERROR_NET_ADHOC_MATCHING_ALREADY_INITIALIZED = 0x80410812,
 	ERROR_NET_ADHOC_MATCHING_NOT_INITIALIZED     = 0x80410813,
 
-	ERROR_NET_ADHOCCTL_WLAN_SWITCH_OFF			 = 0x80410b03,
+	ERROR_NET_APCTL_ALREADY_INITIALIZED          = 0x80410a01,
+
+	ERROR_NET_ADHOCCTL_WLAN_SWITCH_OFF           = 0x80410b03,
 	ERROR_NET_ADHOCCTL_ALREADY_INITIALIZED       = 0x80410b07,
 	ERROR_NET_ADHOCCTL_NOT_INITIALIZED           = 0x80410b08,
-	ERROR_NET_ADHOCCTL_DISCONNECTED				 = 0x80410b09,
+	ERROR_NET_ADHOCCTL_DISCONNECTED              = 0x80410b09,
 	ERROR_NET_ADHOCCTL_BUSY                      = 0x80410b10,
 	ERROR_NET_ADHOCCTL_TOO_MANY_HANDLERS         = 0x80410b12,
 };
@@ -99,16 +105,24 @@ struct ApctlHandler {
 
 static std::map<int, ApctlHandler> apctlHandlers;
 
-void __NetInit() {
+void __ResetInitNetLib() {
 	netInited = false;
 	netAdhocInited = false;
+	netAdhocctlInited = false;
+	netAdhocMatchingInited = false;
 	netApctlInited = false;
 	netInetInited = false;
+	adhocctlHandlers.clear();
+
 	memset(&netMallocStat, 0, sizeof(netMallocStat));
 }
 
-void __NetShutdown() {
+void __NetInit() {
+	__ResetInitNetLib();
+}
 
+void __NetShutdown() {
+	__ResetInitNetLib();
 }
 
 void __UpdateAdhocctlHandlers(int flag, int error) {
@@ -143,10 +157,10 @@ void __NetDoState(PointerWrap &p) {
 	p.Do(netInetInited);
 	p.Do(netAdhocInited);
 	p.Do(netApctlInited);
+	p.Do(netAdhocctlInited);
+	p.Do(netAdhocMatchingInited);
 	p.Do(adhocctlHandlers);
-	p.Do(adhocctlHandlerCount);
 	p.Do(apctlHandlers);
-	p.Do(apctlHandlerCount);
 	p.Do(netMallocStat);
 	p.DoMarker("net");
 }
@@ -165,6 +179,7 @@ void sceNetInit() {
 u32 sceNetTerm() {
 	ERROR_LOG(HLE,"UNIMPL sceNetTerm()");
 	netInited = false;
+
 	return 0;
 }
 
@@ -179,6 +194,10 @@ u32 sceNetAdhocInit() {
 
 u32 sceNetAdhocctlInit(int stackSize, int prio, u32 productAddr) {
 	ERROR_LOG(HLE,"UNIMPL sceNetAdhocctlInit(%i, %i, %08x)", stackSize, prio, productAddr);
+	if(netAdhocctlInited)
+		return ERROR_NET_ADHOCCTL_ALREADY_INITIALIZED;
+	netAdhocctlInited = true;
+
 	return 0;
 }
 
@@ -205,9 +224,12 @@ u32 sceWlanGetSwitchState() {
 // TODO: Should we allow the same handler to be added more than once?
 u32 sceNetAdhocctlAddHandler(u32 handlerPtr, u32 handlerArg) {
 	bool foundHandler = false;
-	u32 retval = adhocctlHandlerCount;
+	u32 retval = 0;
 	struct AdhocctlHandler handler;
 	memset(&handler, 0, sizeof(handler));
+
+	while (adhocctlHandlers.find(retval) != adhocctlHandlers.end())
+		++retval;
 
 	handler.entryPoint = handlerPtr;
 	handler.argument = handlerArg;
@@ -220,13 +242,13 @@ u32 sceNetAdhocctlAddHandler(u32 handlerPtr, u32 handlerArg) {
 	}
 
 	if(!foundHandler && Memory::IsValidAddress(handlerPtr)) {
-		if(adhocctlHandlerCount >= MAX_ADHOCCTL_HANDLERS) {
+		if(adhocctlHandlers.size() >= MAX_ADHOCCTL_HANDLERS) {
 			ERROR_LOG(HLE, "UNTESTED UNTESTED sceNetAdhocctlAddHandler(%x, %x): Too many handlers", handlerPtr, handlerArg);
 			retval = ERROR_NET_ADHOCCTL_TOO_MANY_HANDLERS;
 			return retval;
 		}
-		adhocctlHandlers[adhocctlHandlerCount++] = handler;
-		WARN_LOG(HLE, "UNTESTED sceNetAdhocctlAddHandler(%x, %x): added handler %d", handlerPtr, handlerArg, adhocctlHandlerCount);
+		adhocctlHandlers[retval] = handler;
+		WARN_LOG(HLE, "UNTESTED sceNetAdhocctlAddHandler(%x, %x): added handler %d", handlerPtr, handlerArg, retval);
 	}
 	else
 		ERROR_LOG(HLE, "UNTESTED sceNetAdhocctlAddHandler(%x, %x): Same handler already exists", handlerPtr, handlerArg);
@@ -247,7 +269,6 @@ u32 sceNetAdhocctlDelHandler(u32 handlerID) {
 	
 	if(adhocctlHandlers.find(handlerID) != adhocctlHandlers.end()) {
 		adhocctlHandlers.erase(handlerID);
-		adhocctlHandlerCount = adhocctlHandlerCount > 0? --adhocctlHandlerCount : 0;
 		WARN_LOG(HLE, "UNTESTED sceNetAdhocctlDelHandler(%d): deleted handler %d", handlerID, handlerID);
 	}
 	else
@@ -258,16 +279,25 @@ u32 sceNetAdhocctlDelHandler(u32 handlerID) {
 
 int sceNetAdhocMatchingTerm() {
 	ERROR_LOG(HLE, "UNIMPL sceNetAdhocMatchingTerm()");
+	netAdhocMatchingInited = false;
+
 	return 0;
 }
 
 int sceNetAdhocctlTerm() {
 	ERROR_LOG(HLE, "UNIMPL sceNetAdhocctlTerm()");
+	netAdhocctlInited = false;
+
 	return 0;
 }
 
 int sceNetAdhocTerm() {
 	ERROR_LOG(HLE, "UNIMPL sceNetAdhocTerm()");
+	// Seems to return this when called a second time after being terminated without another initialisation
+	if(!netAdhocInited) 
+		return SCE_KERNEL_ERROR_LWMUTEX_NOT_FOUND;
+	netAdhocInited = false;
+
 	return 0;
 }
 
@@ -275,7 +305,7 @@ int sceNetAdhocTerm() {
 int sceNetEtherNtostr(const char *mac, u32 bufferPtr) {
 	DEBUG_LOG(HLE, "UNTESTED sceNetEtherNtostr(%s, %x)", mac, bufferPtr);
 	if(Memory::IsValidAddress(bufferPtr)) {
-		int len = strlen(mac);
+		size_t len = strlen(mac);
 		for (int i = 0; i < len; i++)
 			Memory::Write_U8(mac[i], bufferPtr + i);
 	}
@@ -321,7 +351,7 @@ int sceNetAdhocctlGetParameter(u32 paramAddr) {
 
 // Return -1 packets since we don't have networking yet..
 int sceNetAdhocPdpRecv(int id, const char *mac, u32 port, void *data, void *dataLength, u32 timeout, int nonBlock) {
-	ERROR_LOG(HLE, "UNIMPL sceNetAdhocPdpRecv(%d, %d, %d, %x, %x, %d, %d)", id, mac, port, data, dataLength, timeout, nonBlock);
+	ERROR_LOG(HLE, "UNIMPL sceNetAdhocPdpRecv(%d, %s, %d, %p, %p, %d, %d)", id, mac, port, data, dataLength, timeout, nonBlock);
 	return -1;
 }
 
@@ -373,13 +403,17 @@ int sceNetGetMallocStat(u32 statPtr) {
 
 int sceNetAdhocMatchingInit(u32 memsize) {
 	ERROR_LOG(HLE, "UNIMPL sceNetAdhocMatchingInit(%08x)", memsize);
+	if(netAdhocMatchingInited) 
+		return ERROR_NET_ADHOC_MATCHING_ALREADY_INITIALIZED;
+	netAdhocMatchingInited = true;
+
 	return 0;
 }
 
 int sceNetInetInit() {
 	ERROR_LOG(HLE, "UNIMPL sceNetInetInit()");
 	if (netInetInited)
-		return ERROR_NET_ADHOC_ALREADY_INITIALIZED; // TODO: What's the proper error for netInet already being inited?
+		return ERROR_NET_INET_ALREADY_INITIALIZED;
 	netInetInited = true;
 
 	return 0;
@@ -395,7 +429,7 @@ int sceNetInetTerm() {
 int sceNetApctlInit() {
 	ERROR_LOG(HLE, "UNIMPL sceNetApctlInit()");
 	if (netAdhocInited)
-		return ERROR_NET_ADHOC_ALREADY_INITIALIZED; // TODO: What's the proper error for apctl already being inited?
+		return ERROR_NET_APCTL_ALREADY_INITIALIZED;
 	netApctlInited = true;
 
 	return 0;
@@ -403,8 +437,8 @@ int sceNetApctlInit() {
 
 int sceNetApctlTerm() {
 	ERROR_LOG(HLE, "UNIMPL sceNeApctlTerm()");
-	netInetInited = false;
-
+	netApctlInited = false;
+	
 	return 0;
 }
 
@@ -412,9 +446,12 @@ int sceNetApctlTerm() {
 // TODO: Should we allow the same handler to be added more than once?
 u32 sceNetApctlAddHandler(u32 handlerPtr, u32 handlerArg) {
 	bool foundHandler = false;
-	u32 retval = apctlHandlerCount;
+	u32 retval = 0;
 	struct ApctlHandler handler;
 	memset(&handler, 0, sizeof(handler));
+
+	while (apctlHandlers.find(retval) != apctlHandlers.end())
+		++retval;
 
 	handler.entryPoint = handlerPtr;
 	handler.argument = handlerArg;
@@ -427,13 +464,13 @@ u32 sceNetApctlAddHandler(u32 handlerPtr, u32 handlerArg) {
 	}
 
 	if(!foundHandler && Memory::IsValidAddress(handlerPtr)) {
-		if(apctlHandlerCount >= MAX_APCTL_HANDLERS) {
+		if(apctlHandlers.size() >= MAX_APCTL_HANDLERS) {
 			ERROR_LOG(HLE, "UNTESTED sceNetApctlAddHandler(%x, %x): Too many handlers", handlerPtr, handlerArg);
 			retval = ERROR_NET_ADHOCCTL_TOO_MANY_HANDLERS; // TODO: What's the proper error code for Apctl's TOO_MANY_HANDLERS?
 			return retval;
 		}
-		apctlHandlers[apctlHandlerCount++] = handler;
-		WARN_LOG(HLE, "UNTESTED sceNetApctlAddHandler(%x, %x): added handler %d", handlerPtr, handlerArg, apctlHandlerCount);
+		apctlHandlers[retval] = handler;
+		WARN_LOG(HLE, "UNTESTED sceNetApctlAddHandler(%x, %x): added handler %d", handlerPtr, handlerArg, retval);
 	}
 	else
 		ERROR_LOG(HLE, "UNTESTED sceNetApctlAddHandler(%x, %x): Same handler already exists", handlerPtr, handlerArg);
@@ -444,10 +481,8 @@ u32 sceNetApctlAddHandler(u32 handlerPtr, u32 handlerArg) {
 }
 
 int sceNetApctlDelHandler(u32 handlerID) {
-	
 	if(apctlHandlers.find(handlerID) != apctlHandlers.end()) {
 		apctlHandlers.erase(handlerID);
-		apctlHandlerCount = apctlHandlerCount > 0? --apctlHandlerCount : 0;
 		WARN_LOG(HLE, "UNTESTED sceNetapctlDelHandler(%d): deleted handler %d", handlerID, handlerID);
 	}
 	else
@@ -456,7 +491,40 @@ int sceNetApctlDelHandler(u32 handlerID) {
 	return 0;
 }
 
+int sceNetInetInetAton(const char *hostname, u32 addrPtr) {
+	ERROR_LOG(HLE, "UNIMPL sceNetInetInetAton(%s, %08x)", hostname, addrPtr);
+	return -1;
+}
 
+int sceNetInetRecv(int socket, u32 bufPtr, u32 bufLen, u32 flags) {
+	ERROR_LOG(HLE, "UNIMPL sceNetInetRecv(%i, %08x, %i, %08x)", socket, bufPtr, bufLen, flags);
+	return -1;
+}
+
+int sceNetInetSend(int socket, u32 bufPtr, u32 bufLen, u32 flags) {
+	ERROR_LOG(HLE, "UNIMPL sceNetInetSend(%i, %08x, %i, %08x)", socket, bufPtr, bufLen, flags);
+	return -1;
+}
+
+int sceNetInetGetErrno() {
+	ERROR_LOG(HLE, "UNIMPL sceNetInetGetErrno()");
+	return -1;
+}
+
+int sceNetInetSocket(int domain, int type, int protocol) {
+	ERROR_LOG(HLE, "UNIMPL sceNetInetSocket(%i, %i, %i)", domain, type, protocol);
+	return -1;
+}
+
+int sceNetInetSetsockopt(int socket, int level, int optname, u32 optvalPtr, int optlen) {
+	ERROR_LOG(HLE, "UNIMPL sceNetInetSetsockopt(%i, %i, %i, %08x, %i)", socket, level, optname, optvalPtr, optlen);
+	return -1;
+}
+
+int sceNetInetConnect(int socket, u32 sockAddrInternetPtr, int addressLength) {
+	ERROR_LOG(HLE, "UNIMPL sceNetInetConnect(%i, %08x, %i)", socket, sockAddrInternetPtr, addressLength);
+	return -1;
+}
 
 const HLEFunction sceNet[] = {
 	{0x39AF39A6, sceNetInit, "sceNetInit"},
@@ -542,6 +610,15 @@ const HLEFunction sceNetAdhocctl[] = {
 	{0xb0b80e80, 0, "sceNetAdhocctlCreateEnterGameModeMin"},
 };
 
+const HLEFunction sceNetAdhocDiscover[] = {
+	{0x941B3877, 0, "sceNetAdhocDiscoverInitStart"},
+	{0x52DE1B97, 0, "sceNetAdhocDiscoverUpdate"},
+	{0x944DDBC6, 0, "sceNetAdhocDiscoverGetStatus"},
+	{0xA2246614, 0, "sceNetAdhocDiscoverTerm"},
+	{0xF7D13214, 0, "sceNetAdhocDiscoverStop"},
+	{0xA423A21B, 0, "sceNetAdhocDiscoverRequestSuspend"},
+};
+
 const HLEFunction sceNetResolver[] = {
 	{0x224c5f44, 0, "sceNetResolverStartNtoA"},
 	{0x244172af, 0, "sceNetResolverCreate"},
@@ -558,36 +635,36 @@ const HLEFunction sceNetResolver[] = {
 
 const HLEFunction sceNetInet[] = {
 	{0x17943399, WrapI_V<sceNetInetInit>, "sceNetInetInit"},
-	{0x2fe71fe7, 0, "sceNetInetSetsockopt"},
-	{0x410b34aa, 0, "sceNetInetConnect"},
-	{0x5be8d595, 0, "sceNetInetSelect"},
-	{0x7aa671bc, 0, "sceNetInetSend"},
-	{0x8b7b220f, 0, "sceNetInetSocket"},
-	{0x8d7284ea, 0, "sceNetInetClose"},
-	{0xb75d5b0a, 0, "sceNetInetInetAddr"},
-	{0xcda85c99, 0, "sceNetInetRecv"},
-	{0xfbabe411, 0, "sceNetInetGetErrno"},
-	{0x05038fc7, 0, "sceNetInetSendto"},
-	{0x1a33f9ae, 0, "sceNetInetBind"},
 	{0x4cfe4e56, 0, "sceNetInetShutdown"},
-	{0xb3888ad4, 0, "sceNetInetGetTcpcbstat"},
-	{0xc91142e4, 0, "sceNetInetRecvfrom"},
-	{0xd0792666, 0, "sceNetInetInetNtop"},
+	{0xa9ed66b9, WrapI_V<sceNetInetTerm>, "sceNetInetTerm"},
+	{0x8b7b220f, WrapI_III<sceNetInetSocket>, "sceNetInetSocket"},
+	{0x2fe71fe7, WrapI_IIIUI<sceNetInetSetsockopt>, "sceNetInetSetsockopt"},
+	{0x4a114c7c, 0, "sceNetInetGetsockopt"}, 
+	{0x410b34aa, WrapI_IUI<sceNetInetConnect>, "sceNetInetConnect"},
+	{0x805502DD, 0, "sceNetInetCloseWithRST"},
 	{0xd10a1a7a, 0, "sceNetInetListen"},
 	{0xdb094e1b, 0, "sceNetInetAccept"},
-	{0x8ca3a97e, 0, "sceNetInetGetPspError"},
-	{0xa9ed66b9, WrapI_V<sceNetInetTerm>, "sceNetInetTerm"},
+	{0xfaabb1dd, 0, "sceNetInetPoll"},
+	{0x5be8d595, 0, "sceNetInetSelect"},
+	{0x8d7284ea, 0, "sceNetInetClose"},
+	{0xcda85c99, WrapI_IUUU<sceNetInetRecv>, "sceNetInetRecv"},
+	{0xc91142e4, 0, "sceNetInetRecvfrom"},
+	{0xeece61d2, 0, "sceNetInetRecvmsg"},
+	{0x7aa671bc, WrapI_IUUU<sceNetInetRecv>, "sceNetInetSend"},
+	{0x05038fc7, 0, "sceNetInetSendto"},
+	{0x774e36f4, 0, "sceNetInetSendmsg"},
+	{0xfbabe411, WrapI_V<sceNetInetGetErrno>, "sceNetInetGetErrno"},
+	{0x1a33f9ae, 0, "sceNetInetBind"},
+	{0xb75d5b0a, 0, "sceNetInetInetAddr"},
+	{0x1BDF5D13, WrapI_CU<sceNetInetInetAton>, "sceNetInetInetAton"},
+	{0xd0792666, 0, "sceNetInetInetNtop"},
 	{0xE30B8C19, 0, "sceNetInetInetPton"},
+	{0x8ca3a97e, 0, "sceNetInetGetPspError"},
 	{0xE247B6D6, 0, "sceNetInetGetpeername"},
 	{0x162e6fd5, 0, "sceNetInetGetsockname"},
-	{0x4a114c7c, 0, "sceNetInetGetsockopt"}, 
-	{0xfaabb1dd, 0, "sceNetInetPoll"},
-	{0x1BDF5D13, 0, "sceNetInetInetAton"},
 	{0x80A21ABD, 0, "sceNetInetSocketAbort"},
-	{0x805502DD, 0, "sceNetInetCloseWithRST"},
-	{0x774e36f4, 0, "sceNetInetSendmsg"},
-	{0xeece61d2, 0, "sceNetInetRecvmsg"},
 	{0x39b0c7d3, 0, "sceNetInetGetUdpcbstat"},
+	{0xb3888ad4, 0, "sceNetInetGetTcpcbstat"},
 };
 
 const HLEFunction sceNetApctl[] = {
@@ -614,6 +691,7 @@ void Register_sceNet() {
 	RegisterModule("sceNet", ARRAY_SIZE(sceNet), sceNet);
 	RegisterModule("sceNetAdhoc", ARRAY_SIZE(sceNetAdhoc), sceNetAdhoc);
 	RegisterModule("sceNetAdhocMatching", ARRAY_SIZE(sceNetAdhocMatching), sceNetAdhocMatching);
+	RegisterModule("sceNetAdhocDiscover", ARRAY_SIZE(sceNetAdhocDiscover), sceNetAdhocDiscover);
 	RegisterModule("sceNetAdhocctl", ARRAY_SIZE(sceNetAdhocctl), sceNetAdhocctl);
 	RegisterModule("sceNetResolver", ARRAY_SIZE(sceNetResolver), sceNetResolver);
 	RegisterModule("sceNetInet", ARRAY_SIZE(sceNetInet), sceNetInet);
